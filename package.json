@@ -1,0 +1,30 @@
+{
+  "name": "ceo-knowledge",
+  "version": "2.0.0-dev",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/mobile",
+    "workers/gateway",
+    "packages/shared"
+  ],
+  "scripts": {
+    "dev:mobile": "npm --workspace @ceo-knowledge/mobile run dev",
+    "dev:worker": "npm --workspace @ceo-knowledge/gateway run dev",
+    "build": "npm run build:shared && npm run build:mobile && npm run build:worker",
+    "build:shared": "npm --workspace @ceo-knowledge/shared run build",
+    "build:mobile": "npm --workspace @ceo-knowledge/mobile run build",
+    "build:worker": "npm --workspace @ceo-knowledge/gateway run build",
+    "typecheck": "npm run typecheck:shared && npm run typecheck:mobile && npm run typecheck:worker",
+    "typecheck:shared": "npm --workspace @ceo-knowledge/shared run typecheck",
+    "typecheck:mobile": "npm --workspace @ceo-knowledge/mobile run typecheck",
+    "typecheck:worker": "npm --workspace @ceo-knowledge/gateway run typecheck",
+    "test": "npm --workspace @ceo-knowledge/gateway run test && npm --workspace @ceo-knowledge/shared run test",
+    "deploy:worker": "npm --workspace @ceo-knowledge/gateway run deploy",
+    "deploy:mobile": "npm --workspace @ceo-knowledge/mobile run deploy",
+    "verify": "npm run typecheck && npm test && npm run build"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

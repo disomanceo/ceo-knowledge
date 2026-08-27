@@ -1,0 +1,11 @@
+{
+  "name": "Ceo Mobile",
+  "short_name": "Ceo",
+  "description": "Ceo Secretary Brain",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0b0d12",
+  "theme_color": "#0b0d12",
+  "lang": "th",
+  "icons": []
+}

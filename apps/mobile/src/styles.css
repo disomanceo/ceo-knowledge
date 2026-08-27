@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+:root { font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color-scheme: dark; background:#090b10; }
+html, body, #root { min-height:100%; margin:0; background:#090b10; }
+body { min-width:320px; }
+* { box-sizing:border-box; }
+.safe-bottom { padding-bottom:max(12px, env(safe-area-inset-bottom)); }
+.glass { background:rgba(18,21,30,.88); backdrop-filter:blur(18px); border:1px solid rgba(255,255,255,.07); }
+.card { background:#12151e; border:1px solid #242937; border-radius:18px; }
+.muted { color:#8f98aa; }
+.accent { color:#f4c95d; }
+.btn { border:1px solid #343a4b; background:#191d28; border-radius:14px; min-height:44px; padding:0 16px; font-weight:650; }
+.btn:disabled { opacity:.45; }
+.btn-primary { background:#f4c95d; color:#111318; border-color:#f4c95d; }
+.input { width:100%; min-height:46px; border-radius:14px; border:1px solid #303646; background:#0d1017; color:#f7f8fb; padding:0 14px; outline:none; }
+.input:focus { border-color:#f4c95d; box-shadow:0 0 0 3px rgba(244,201,93,.10); }
+.badge { display:inline-flex; align-items:center; gap:6px; padding:4px 9px; border-radius:999px; font-size:12px; border:1px solid #303646; color:#b6bece; }
+.dot { width:7px; height:7px; border-radius:999px; background:#747d90; }
+.dot.online { background:#43d17b; box-shadow:0 0 10px rgba(67,209,123,.5); }
+.chat-bubble { max-width:88%; padding:12px 14px; border-radius:16px; white-space:pre-wrap; line-height:1.5; }
+.chat-user { margin-left:auto; background:#f4c95d; color:#15171d; border-bottom-right-radius:5px; }
+.chat-ceo { background:#171b26; border:1px solid #292f3e; border-bottom-left-radius:5px; }
