@@ -2,6 +2,7 @@ import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type K
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback } from './chat';
+import { enqueueOllamaChat } from './runtime-chat';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 
 const corsHeaders: HeadersInit = {
@@ -137,7 +138,7 @@ async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<str
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: env.LLM_API_KEY ? 'cloud-ai' : 'knowledge-only', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: env.LLM_API_KEY ? 'auto-runtime-cloud-ai' : 'auto-runtime-knowledge', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -211,9 +212,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         return ok({ intent: 'tasks', answer, tasks });
       }
       const search = await searchKnowledge(env, token, message, 10);
+      const fallbackAnswer = cloudChatFallback(message, search.results);
+      const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);
+      if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device }, 202);
       const llm = await maybeLlm(env, message, search.results);
       const mode = llm ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
-      return ok({ intent: 'recall', answer: llm || cloudChatFallback(message, search.results), search, ai: Boolean(llm), aiConfigured: Boolean(env.LLM_API_KEY), mode });
+      return ok({ intent: 'recall', answer: llm || fallbackAnswer, search, ai: Boolean(llm), aiConfigured: Boolean(env.LLM_API_KEY), mode, provider: llm ? 'cloud-ai' : 'knowledge' });
     }
 
     if (url.pathname === '/api/drive/config' && request.method === 'GET') return ok(await ceoDriveConfig(env));

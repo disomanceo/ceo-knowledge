@@ -5,6 +5,7 @@ export interface Env {
   LLM_API_KEY?: string;
   LLM_BASE_URL?: string;
   LLM_MODEL?: string;
+  OLLAMA_CHAT_MODEL?: string;
 }
 
 export interface AuthUser {

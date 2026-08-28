@@ -31,8 +31,10 @@ Next validation: login from an actual phone, create/read Memory and Tasks, verif
 - safe remote tool allowlist
 - outbound polling Device Agent
 - E2E runtime.status job completed successfully
+- SCHOOL-PC production Pair API E2E completed; device is TRUSTED/ONLINE
+- AUTO Chat Router can dispatch safe `ollama.chat` Runtime jobs and poll results back to Mobile
 
-Next validation: perform the six-digit pairing flow from the deployed Mobile PWA instead of admin bootstrap, then add revoke/disable UI and approval-required mutating tool classes.
+Next validation: manually exercise the six-digit pairing UI on a fresh/untrusted device, then add revoke/disable UI and approval-required mutating tool classes. The SCHOOL-PC backend Pair API path is already E2E proven.
 
 ## V2.0 — Knowledge Expansion — RUNTIME INGESTION + SEMANTIC SEARCH E2E DONE
 

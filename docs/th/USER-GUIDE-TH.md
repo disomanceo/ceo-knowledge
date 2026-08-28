@@ -70,14 +70,16 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 
 หน้า Graph อ่าน `knowledge_entries` และ `knowledge_links` จาก Supabase Cloud โดยตรงด้วย session ของผู้ใช้ และถูกจำกัดด้วย RLS `auth.uid() = user_id` จึงดูได้แม้ PC/Runtime ทุกเครื่องปิด และไม่มี `service_role` อยู่ใน Mobile
 
-## Chat บน Cloud
+## Chat บน Cloud — AUTO Router
 
-ขณะนี้ Chat บน `ceo-knowledge.pages.dev` ทำงานใน **Ceo Knowledge Mode** เพราะ Worker ยังไม่ได้ตั้งค่า AI Provider สำหรับการสนทนาทั่วไป
+หน้า Chat ใช้โหมด **AUTO** แล้ว โดยลำดับคือ:
 
-- พิมพ์ทักทายหรือถามว่า Ceo ทำอะไรได้ ระบบจะตอบได้ตามปกติ
-- ถามเรื่องที่มีใน Memory / Knowledge / Tasks / Events ระบบจะค้นและตอบจากข้อมูลจริง
-- ถ้าถามเรื่องทั่วไปที่ไม่มีใน Knowledge ระบบจะแจ้งว่าอยู่ใน Knowledge Mode แทนการแสดงข้อความเหมือนระบบเสีย
-- การคุยแบบ AI ทั่วไปต้องเพิ่ม AI Provider ให้ Worker ภายหลัง
+1. คำสั่งเลขานุการที่ชัดเจน เช่น จำไว้ / วันนี้ / งานค้าง ใช้ Ceo Knowledge โดยตรง
+2. ถ้ามีเครื่อง Ceo Runtime ที่ TRUSTED + ONLINE และมี Ollama ระบบส่งคำถามไป `qwen3:4b` อัตโนมัติ
+3. ภายหลังถ้าเพิ่ม Cloud AI Provider จะใช้เป็น fallback เพิ่มได้
+4. ถ้าไม่มี AI Provider พร้อม ระบบยังตอบจาก Ceo Knowledge ได้ตามเดิม
+
+ระหว่าง Ollama ทำงาน หน้า Chat จะแสดง `AUTO · OLLAMA qwen3:4b` และรอ Runtime Job ให้เอง ไม่ต้องเปิดหน้า Devices ไปกด Job ด้วยมือ ถ้า Ollama ใช้ไม่ได้ ระบบจะกลับไป Knowledge fallback อัตโนมัติ
 
 ## Ceo Drive — นำเอกสาร Cloud เข้า Ceo Knowledge
 

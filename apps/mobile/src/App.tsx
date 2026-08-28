@@ -9,7 +9,17 @@ import DrivePage from './DrivePage';
 import { captureCeoDriveProviderToken } from './drive';
 
 type Tab = 'chat' | 'today' | 'memory' | 'tasks' | 'graph' | 'drive' | 'devices';
-type ChatItem = { role: 'user' | 'ceo'; text: string };
+type ChatItem = { role: 'user' | 'ceo'; text: string; meta?: string };
+
+async function waitForRuntimeJob(id: string, timeoutMs = 125_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const job = await api.job(id);
+    if (['completed','failed','cancelled','expired'].includes(String(job?.status || ''))) return job;
+    await new Promise(resolve => setTimeout(resolve, 1000));
+  }
+  return { id, status: 'timeout' };
+}
 
 function Login({ onReady }: { onReady: () => void }) {
   const [email, setEmail] = useState('');
@@ -45,18 +55,46 @@ function Login({ onReady }: { onReady: () => void }) {
 
 function ChatPage() {
   const [message, setMessage] = useState('');
-  const [items, setItems] = useState<ChatItem[]>([{ role:'ceo', text:'พร้อมครับ ถามเรื่องความจำ นัดหมาย งานค้าง หรือบอก “จำไว้…” ได้เลย' }]);
+  const [items, setItems] = useState<ChatItem[]>([{ role:'ceo', text:'พร้อมครับ ถามได้ทั้ง Ceo Knowledge และคำถามทั่วไป — ถ้าเครื่อง Ceo Online ระบบจะใช้ Ollama ให้อัตโนมัติ', meta:'AUTO' }]);
   const [busy,setBusy]=useState(false);
+  const [provider,setProvider]=useState('AUTO · READY');
+  const [thinking,setThinking]=useState('Ceo กำลังค้นความจำ…');
   async function send() {
     const text=message.trim(); if(!text||busy)return;
-    setMessage(''); setItems(v=>[...v,{role:'user',text}]); setBusy(true);
-    try { const r=await api.chat(text); setItems(v=>[...v,{role:'ceo',text:r.answer||'เรียบร้อย'}]); }
-    catch(e:any){setItems(v=>[...v,{role:'ceo',text:`เกิดข้อผิดพลาด: ${String(e?.message||e)}`}]);}
-    finally{setBusy(false);}
+    setMessage(''); setItems(v=>[...v,{role:'user',text}]); setBusy(true); setThinking('Ceo กำลังเลือก Provider…');
+    try {
+      const r=await api.chat(text);
+      if(r?.mode==='ollama-pending'&&r?.jobId){
+        const model=String(r.model||'qwen3:4b');
+        const device=String(r.device?.name||'Ceo Runtime');
+        setProvider('AUTO · OLLAMA '+model);
+        setThinking('Ollama '+model+' บน '+device+' กำลังคิด…');
+        const job=await waitForRuntimeJob(String(r.jobId));
+        const result=job?.result&&typeof job.result==='object'?job.result:{};
+        const answer=String(result?.response||'').trim();
+        if(job?.status==='completed'&&result?.available!==false&&answer){
+          const actualModel=String(result?.model||model);
+          setProvider('AUTO · OLLAMA '+actualModel);
+          setItems(v=>[...v,{role:'ceo',text:answer,meta:'OLLAMA · '+actualModel}]);
+        } else {
+          const fallback=String(r.fallbackAnswer||'Ollama ยังตอบไม่ได้ในรอบนี้ และไม่พบคำตอบสำรองจาก Ceo Knowledge');
+          const reason=String(result?.reason||job?.error?.message||job?.status||'OLLAMA_UNAVAILABLE');
+          setProvider('AUTO · KNOWLEDGE FALLBACK');
+          setItems(v=>[...v,{role:'ceo',text:fallback,meta:'KNOWLEDGE FALLBACK · '+reason}]);
+        }
+      } else {
+        const mode=String(r?.mode||r?.intent||'knowledge');
+        const label=mode==='cloud-ai'?'CLOUD · AI':mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';
+        setProvider(label);
+        setItems(v=>[...v,{role:'ceo',text:r.answer||'เรียบร้อย',meta:label.replace('AUTO · ','')}]);
+      }
+    } catch(e:any){
+      setProvider('AUTO · ERROR');
+      setItems(v=>[...v,{role:'ceo',text:'เกิดข้อผิดพลาด: '+String(e?.message||e),meta:'ERROR'}]);
+    } finally { setBusy(false); setThinking('Ceo กำลังค้นความจำ…'); }
   }
-  return <div className="chat-shell flex flex-col min-h-0"><div className="flex-1 min-h-0 overflow-auto space-y-3 pr-1">{items.map((item,i)=><div key={i} className={`chat-bubble ${item.role==='user'?'chat-user':'chat-ceo'}`}>{item.text}</div>)}{busy&&<div className="chat-bubble chat-ceo muted">Ceo กำลังค้นความจำ…</div>}</div><div className="chat-composer pt-3 flex gap-2"><input className="input" value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>e.key==='Enter'&&void send()} placeholder="พิมพ์ถาม Ceo…"/><button className="btn btn-primary px-4" onClick={()=>void send()} disabled={busy||!message.trim()}><MessageSquareText size={20}/></button></div></div>;
+  return <div className="chat-shell flex flex-col min-h-0"><div className="flex items-center justify-between gap-3 pb-3"><div><div className="font-semibold">Ceo Chat</div><div className="muted text-[11px]">AUTO Router · Runtime first · Cloud fallback</div></div><span className="badge">{provider}</span></div><div className="flex-1 min-h-0 overflow-auto space-y-3 pr-1">{items.map((item,i)=><div key={i} className={'chat-bubble '+(item.role==='user'?'chat-user':'chat-ceo')}>{item.text}{item.role==='ceo'&&item.meta&&<div className="chat-meta">{item.meta}</div>}</div>)}{busy&&<div className="chat-bubble chat-ceo muted">{thinking}</div>}</div><div className="chat-composer pt-3 flex gap-2"><input className="input" value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>e.key==='Enter'&&void send()} placeholder="พิมพ์ถาม Ceo…"/><button className="btn btn-primary px-4" onClick={()=>void send()} disabled={busy||!message.trim()}><MessageSquareText size={20}/></button></div></div>;
 }
-
 function TodayPage() {
   const [data,setData]=useState<{events:EventRecord[];tasks:TaskRecord[]}|null>(null); const [error,setError]=useState('');
   const load=async()=>{setError('');try{setData(await api.today());}catch(e:any){setError(String(e?.message||e));}};

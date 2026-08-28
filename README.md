@@ -15,7 +15,7 @@ This repository owns cloud-facing Ceo Knowledge code:
 
 Desktop Runtime, MCP tools, local files, Ollama and the outbound Device Agent remain in the separate `Ceo-MCP-Agent` repository.
 
-Ceo Local Notes is Ceo-owned Markdown workspace functionality and does not depend on a third-party notes SDK/API/runtime. Ceo Drive is the Ceo-owned cloud-document connector; Google Drive is its first read-only backend.
+Ceo Local Notes is Ceo-owned Markdown workspace functionality and does not depend on a third-party notes SDK/API/runtime. Ceo Drive is the Ceo-owned cloud-document connector; Google Drive is its first read-only backend. The Mobile Chat AUTO Router can use a trusted online Ceo Runtime with local Ollama before falling back to Cloud/Knowledge modes.
 
 ## Production endpoints
 
