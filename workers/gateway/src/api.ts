@@ -1,4 +1,4 @@
-import type { DeviceRecord, EventRecord, MemoryRecord, TaskRecord } from '@ceo-knowledge/shared';
+import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, safeLimit, searchOr, sha256Hex } from './security';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 
@@ -253,10 +253,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/graph' && request.method === 'GET') {
       const knowledgeId = clean(url.searchParams.get('knowledgeId'), 80);
       const or = knowledgeId ? `(from_knowledge_id.eq.${knowledgeId},to_knowledge_id.eq.${knowledgeId})` : '';
-      const links = await rest<any[]>(env, token, `knowledge_links${qs({ select: '*', ...(or ? { or } : {}), limit: 200 })}`).catch(() => []);
+      const links = await rest<KnowledgeGraphLink[]>(env, token, `knowledge_links${qs({ select: 'id,from_knowledge_id,to_knowledge_id,relation,weight,source,metadata,created_at', ...(or ? { or } : {}), order: 'created_at.desc', limit: 200 })}`).catch(() => []);
       const ids = [...new Set(links.flatMap(link => [link.from_knowledge_id, link.to_knowledge_id]).filter(Boolean))];
-      const nodes = ids.length ? await rest<any[]>(env, token, `knowledge_entries${qs({ select: 'id,title,summary,knowledge_type,topic,status,tags,updated_at', id: `in.(${ids.join(',')})` })}`) : [];
-      return ok({ nodes, links });
+      const nodes = ids.length ? await rest<KnowledgeGraphNode[]>(env, token, `knowledge_entries${qs({ select: 'id,title,summary,knowledge_type,topic,status,tags,updated_at', id: `in.(${ids.join(',')})`, status: 'eq.active' })}`) : [];
+      return ok(filterActiveKnowledgeGraph({ nodes, links: links.map(link=>({ ...link, weight:Number(link.weight||0) })) }));
     }
 
     return fail('NOT_FOUND', 'ไม่พบ API ที่ร้องขอ', 404);

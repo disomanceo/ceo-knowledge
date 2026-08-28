@@ -20,3 +20,15 @@ body { min-width:320px; }
 .chat-bubble { max-width:88%; padding:12px 14px; border-radius:16px; white-space:pre-wrap; line-height:1.5; }
 .chat-user { margin-left:auto; background:#f4c95d; color:#15171d; border-bottom-right-radius:5px; }
 .chat-ceo { background:#171b26; border:1px solid #292f3e; border-bottom-left-radius:5px; }
+
+.graph-shell { min-height:320px; }
+.graph-canvas { width:100%; height:auto; min-height:320px; display:block; background:radial-gradient(circle at center, rgba(244,201,93,.06), transparent 55%); }
+.graph-edge { stroke:#3b4355; opacity:.72; vector-effect:non-scaling-stroke; }
+.graph-edge-active { stroke:#f4c95d; opacity:.95; }
+.graph-node { cursor:pointer; outline:none; }
+.graph-dot { fill:#1d2431; stroke:#626d82; stroke-width:2; transition:fill .16s ease,stroke .16s ease,filter .16s ease; }
+.graph-dot-related { stroke:#9da8bc; }
+.graph-dot-active { fill:#f4c95d; stroke:#ffe7a3; filter:drop-shadow(0 0 8px rgba(244,201,93,.55)); }
+.graph-label { fill:#cbd2df; font-size:12px; pointer-events:none; user-select:none; }
+.graph-list-active { border-color:#f4c95d; box-shadow:0 0 0 1px rgba(244,201,93,.15); }
+@media (max-width:520px) { .graph-canvas { min-height:290px; } .graph-label { font-size:11px; } }

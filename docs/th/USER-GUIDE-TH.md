@@ -13,7 +13,7 @@ Ceo Knowledge คือส่วนความจำและเลขาส่
 
 1. เปิด Ceo Mobile ใน Chrome/Safari บนมือถือหรือคอมพิวเตอร์
 2. Login ด้วยบัญชี Supabase/Ceo เดิม
-3. เมื่อ Login สำเร็จ จะเห็น 5 หน้า: Chat, Today, Memory, Tasks และ Devices
+3. เมื่อ Login สำเร็จ จะเห็น 6 หน้า: Chat, Today, Memory, Tasks, Graph และ Devices
 
 ## หน้า Chat
 
@@ -62,7 +62,13 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 
 ระบบตัด self-match, รวมหลาย chunks ของ Knowledge เดียวกัน และจัดลำดับคู่ ID ให้คงที่เพื่อไม่สร้าง A→B และ B→A ซ้ำ หาก auto-link มีปัญหา เอกสารยัง ingest สำเร็จตามปกติ
 
-คำสั่ง `knowledge.graph` จะแสดงเฉพาะ Knowledge ที่ยัง Active และไม่แสดง link ที่ปลายทางถูกลืม/Archive แล้ว ส่วนหน้า Graph แบบภาพบน Mobile/Web ยังเป็นงานรอบถัดไป
+คำสั่ง `knowledge.graph` จะแสดงเฉพาะ Knowledge ที่ยัง Active และไม่แสดง link ที่ปลายทางถูกลืม/Archive แล้ว
+
+### หน้า Graph บน Ceo Mobile
+
+หน้า **Graph** แสดง Knowledge เป็นจุดและความสัมพันธ์เป็นเส้นแบบ SVG โดยไม่ติดตั้ง graph library ขนาดใหญ่ สามารถกดจุดเพื่อดูรายละเอียด, tags, จำนวนความสัมพันธ์ และกดไปยัง Knowledge ที่เชื่อมกันได้ รวมทั้งสลับเป็นมุมมองรายการและค้นจากหัวข้อ / topic / tag / type ได้
+
+หน้า Graph อ่าน `knowledge_entries` และ `knowledge_links` จาก Supabase Cloud โดยตรงด้วย session ของผู้ใช้ และถูกจำกัดด้วย RLS `auth.uid() = user_id` จึงดูได้แม้ PC/Runtime ทุกเครื่องปิด และไม่มี `service_role` อยู่ใน Mobile
 
 ## Hybrid Recall — ค้นทั้งคำตรงและความหมาย
 
@@ -97,6 +103,7 @@ Remote Runtime อนุญาตให้มือถือเรียก Sema
 - Chat กับ Memory/Knowledge ที่อยู่บน Cloud
 - ดู Today
 - ดู Tasks
+- ดู Knowledge Graph
 - ค้น Memory
 - ดู Devices ว่า Offline
 
@@ -120,4 +127,4 @@ Remote Runtime อนุญาตให้มือถือเรียก Sema
 
 ## สถานะปัจจุบัน 28 สิงหาคม 2569
 
-V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA deploy แล้ว, V1.2 Remote Runtime foundation ทำ E2E ผ่านแล้ว และ V2 File Ingestion + Ollama extraction + 768-d embedding + Semantic Search ทำ E2E ผ่านบน SCHOOL-PC แล้ว งานถัดไปคือ Hybrid Retrieval, Graph auto-link, Connectors, Web Push และ Mobile import UI
+V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA foundation deploy แล้ว, V1.2 Remote Runtime foundation ทำ E2E ผ่านแล้ว และ V2 File Ingestion + Semantic Search + Hybrid Recall + Graph Auto-link ทำ E2E ผ่านแล้ว ส่วน Graph UI สำหรับ Mobile/Web เขียนและ verify ผ่านแล้ว โดยอ่าน Cloud ผ่าน Supabase RLS งานถัดไปคือ Obsidian/Google connectors, Web Push และ Mobile import UI

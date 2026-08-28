@@ -14,7 +14,8 @@
 - Supabase Auth reuse
 - Cloudflare Worker gateway
 - React/Vite/Tailwind PWA
-- Chat / Today / Memory / Tasks / Devices
+- Chat / Today / Memory / Tasks / Graph / Devices
+- Graph reads authenticated `ceo_knowledge` data directly from Supabase under RLS so it does not depend on a running PC/Runtime
 - profiles / reminders / audit tables
 
 Next validation: login from an actual phone, create/read Memory and Tasks, verify Today while all PCs are off, then add Web Push scheduling.
@@ -49,6 +50,7 @@ Database foundation deployed:
 
 Runtime implementation completed and proven on SCHOOL-PC:
 
+- Mobile Graph visualization source is implemented with native SVG, active-node filtering, graph/list modes and direct authenticated Supabase RLS reads
 - semantic Knowledge Graph auto-link is E2E proven with canonical pair dedup and active-node filtering
 - Hybrid `knowledge.recall` merges keyword + semantic retrieval with bounded scoring and keyword fallback
 - semantic chunk duplicates collapse to one Knowledge result; project-scoped queries stay keyword-only until vector project filtering exists
@@ -66,14 +68,12 @@ Runtime implementation completed and proven on SCHOOL-PC:
 
 Next implementation order:
 
-1. Hybrid retrieval combining keyword + semantic scores into one recall path.
-2. Knowledge graph auto-linking and graph UI.
-3. Obsidian connector (local Markdown import/export, no dependency for Core).
-4. Google Drive connector for selected documents.
-5. Google Calendar connector with explicit sync direction/conflict policy.
-6. Web Push reminders and follow-up scheduler.
-7. Backup/export and restore tooling.
-8. Release hardening and versioned API contract tests between both repositories.
+1. Obsidian connector (local Markdown import/export, no dependency for Core).
+2. Google Drive connector for selected documents.
+3. Google Calendar connector with explicit sync direction/conflict policy.
+4. Web Push reminders and follow-up scheduler.
+5. Backup/export and restore tooling.
+6. Release hardening and versioned API contract tests between both repositories.
 
 ## Non-negotiable rule
 
