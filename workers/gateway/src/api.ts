@@ -239,6 +239,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok(Array.isArray(device) ? device[0] || null : device);
     }
 
+    if (url.pathname === '/api/runtime/jobs' && request.method === 'GET') {
+      const limit = safeLimit(url.searchParams.get('limit'), 10, 50);
+      const jobs = await rest<any[]>(env, token, `runtime_jobs${qs({ select: 'id,device_id,tool,status,approval_state,origin,created_at,finished_at,error', order: 'created_at.desc', limit })}`);
+      return ok({ jobs });
+    }
+
     if (url.pathname === '/api/runtime/jobs' && request.method === 'POST') {
       const body = await jsonBody<any>(request), deviceId = clean(body.deviceId, 80), tool = clean(body.tool, 200);
       assertRemoteTool(tool);

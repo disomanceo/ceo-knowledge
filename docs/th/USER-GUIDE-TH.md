@@ -13,11 +13,24 @@ Ceo Knowledge คือส่วนความจำและเลขาส่
 
 1. เปิด Ceo Mobile ใน Chrome/Safari บนมือถือหรือคอมพิวเตอร์
 2. Login ด้วยบัญชี Supabase/Ceo เดิม
-3. เมื่อ Login สำเร็จ จะเห็น 7 หน้า: Chat, Today, Memory, Tasks, Graph, Drive และ Devices
+3. เมื่อ Login สำเร็จ หน้าแรกคือ **Console** และแถบล่างมี Console, Chat, Today, Tasks, Graph, Drive และ Devices ส่วน Memory เปิดจากทางลัดใน Console
+
+## บทบาทของ Ceo Mobile
+
+Ceo Mobile ไม่ได้มีเป้าหมายสร้าง ChatGPT ขึ้นมาใหม่ หน้าเว็บนี้ทำหน้าที่เป็น **Remote Console + Secretary Dashboard** สำหรับดูและควบคุม Ceo จากมือถือ
+
+- ใช้ ChatGPT เป็นห้องคุย/สมองหลักเมื่อเน้นการสนทนาและ reasoning
+- ใช้ Ceo Mobile ดู Today, Tasks, Devices, Remote Jobs, Knowledge Graph, Drive และสถานะระบบ
+- หน้า Chat/Ollama ของ Ceo เป็น **AI สำรอง** เมื่อไม่ได้ใช้ ChatGPT
+- การเปลี่ยนบทบาทนี้ไม่ได้รื้อฐานข้อมูล, Device Agent, Runtime, Knowledge หรือ security architecture เดิม
+
+## หน้า Console
+
+เป็นหน้าแรกหลัง Login แสดง Runtime Online, จำนวนงานค้าง, กิจกรรมวันนี้, Remote Jobs ที่กำลังทำ, System readiness และทางลัดไป Chat/Today/Tasks/Memory/Graph/Drive/Devices พร้อมรายการ Remote Jobs ล่าสุด
 
 ## หน้า Chat
 
-ใช้ถามความจำหรือข้อมูลที่ Ceo เก็บไว้ เช่น
+เป็น Chat สำรองผ่าน Ceo Knowledge/Ollama ใช้เมื่อไม่ได้สั่งผ่าน ChatGPT เช่น
 
 - `เมื่อวานเราตกลงเรื่อง Ceo Knowledge ว่ายังไง`
 - `วันนี้มีอะไร`
@@ -75,11 +88,11 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 หน้า Chat ใช้โหมด **AUTO** แล้ว โดยลำดับคือ:
 
 1. คำสั่งเลขานุการที่ชัดเจน เช่น จำไว้ / วันนี้ / งานค้าง ใช้ Ceo Knowledge โดยตรง
-2. ถ้ามีเครื่อง Ceo Runtime ที่ TRUSTED + ONLINE และมี Ollama ระบบส่งคำถามไป `qwen3:4b` อัตโนมัติ
+2. ถ้ามีเครื่อง Ceo Runtime ที่ TRUSTED + ONLINE และมี Ollama ระบบส่งคำถามไปโมเดล fallback ที่กำหนดไว้ ปัจจุบันใช้ `qwen2.5vl:3b` เพื่อให้ตอบเร็วกว่า Qwen3 บนเครื่องทดลอง
 3. ภายหลังถ้าเพิ่ม Cloud AI Provider จะใช้เป็น fallback เพิ่มได้
 4. ถ้าไม่มี AI Provider พร้อม ระบบยังตอบจาก Ceo Knowledge ได้ตามเดิม
 
-ระหว่าง Ollama ทำงาน หน้า Chat จะแสดง `AUTO · OLLAMA qwen3:4b` และรอ Runtime Job ให้เอง ไม่ต้องเปิดหน้า Devices ไปกด Job ด้วยมือ ถ้า Ollama ใช้ไม่ได้ ระบบจะกลับไป Knowledge fallback อัตโนมัติ
+ระหว่าง Ollama ทำงาน หน้า Chat จะแสดงชื่อโมเดลจริง เช่น `AUTO · OLLAMA qwen2.5vl:3b` และรอ Runtime Job ให้เอง ไม่ต้องเปิดหน้า Devices ไปกด Job ด้วยมือ ถ้า Ollama ใช้ไม่ได้ ระบบจะกลับไป Knowledge fallback อัตโนมัติ
 
 ## Ceo Drive — นำเอกสาร Cloud เข้า Ceo Knowledge
 
@@ -175,4 +188,4 @@ Remote Runtime อนุญาตให้มือถือเรียก Sema
 
 ## สถานะปัจจุบัน 28 สิงหาคม 2569
 
-V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA foundation deploy แล้ว, V1.2 Remote Runtime foundation ทำ E2E ผ่านแล้ว และ V2 File Ingestion + Semantic Search + Hybrid Recall + Graph Auto-link ทำ E2E ผ่านแล้ว ส่วน Graph UI สำหรับ Mobile/Web เขียนและ verify ผ่านแล้ว โดยอ่าน Cloud ผ่าน Supabase RLS งานถัดไปคือ Google Drive/Calendar connectors, Web Push และ Mobile import UI
+V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA และ V1.2 Remote Runtime ทำ E2E ผ่านแล้ว, V2 File Ingestion/Semantic/Hybrid/Graph/Local Notes ทำ E2E ผ่านแล้ว และบทบาท Mobile ถูกล็อกเป็น Remote Console + Secretary Dashboard โดยคง Chat/Ollama เป็น fallback งานถัดไปคือทดสอบ Console บนมือถือจริง, สิทธิ์ Revoke/Approval, Google Drive/Calendar และ Web Push

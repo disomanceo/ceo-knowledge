@@ -39,3 +39,7 @@ body { min-width:320px; }
 @media (max-height:640px) { .chat-shell { height:calc(100dvh - 176px); min-height:250px; } }
 
 .chat-meta { margin-top:7px; padding-top:5px; border-top:1px solid rgba(255,255,255,.07); font-size:10px; letter-spacing:.04em; color:#8f99ad; }
+
+.console-stat { min-height:108px; }
+.console-action { width:100%; min-height:92px; transition:border-color .15s ease,transform .15s ease; }
+.console-action:active { transform:scale(.985); border-color:#f4c95d; }

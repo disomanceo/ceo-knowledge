@@ -39,6 +39,7 @@ export const api = {
   pair: (code: string) => request<DeviceRecord | null>('/api/devices/pair', { method: 'POST', body: JSON.stringify({ code }) }),
   runJob: (deviceId: string, tool: string, args: Record<string, unknown> = {}) => request<any>('/api/runtime/jobs', { method: 'POST', body: JSON.stringify({ deviceId, tool, arguments: args }) }),
   job: (id: string) => request<any>(`/api/runtime/jobs/${id}`),
+  jobs: (limit = 10) => request<{ jobs: any[] }>(`/api/runtime/jobs?limit=${Math.max(1,Math.min(50,limit))}`),
   search: (q: string) => request<any>(`/api/search?q=${encodeURIComponent(q)}`),
   driveConfig: () => request<CeoDriveConfig>('/api/drive/config'),
   driveStatus: (driveToken: string) => request<any>('/api/drive/status', { headers: { 'x-ceo-drive-token': driveToken } }),

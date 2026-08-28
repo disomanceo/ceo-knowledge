@@ -18,12 +18,12 @@ export function selectOllamaDevice(devices:any[], now=Date.now()):any|null {
     .sort((a,b)=>Date.parse(String(b.last_seen_at||''))-Date.parse(String(a.last_seen_at||'')))[0]||null;
 }
 
-export function buildOllamaChatPrompt(message:string, searchResults:any[], runtimeModel='qwen3:4b'):string {
+export function buildOllamaChatPrompt(message:string, searchResults:any[], runtimeModel='qwen2.5vl:3b'):string {
   const context=(Array.isArray(searchResults)?searchResults:[]).slice(0,8).map((row:any,index:number)=>({
     n:index+1,kind:clean(row?.kind,80),title:clean(row?.title,240),content:clean(row?.content||row?.summary||row?.rationale,1200),score:Number(row?._score||0),
   }));
   return [
-    '/no_think',
+    ...(runtimeModel.toLowerCase().startsWith('qwen3') ? ['/no_think'] : []),
     'Runtime metadata: Provider=Ollama, Model='+clean(runtimeModel,120)+'. ถ้าผู้ใช้ถามว่าใช้ AI/provider/model อะไร ให้ตอบจาก Runtime metadata นี้เท่านั้น ไม่ใช้ Knowledge context เดาคำตอบ',
     'คำถามของผู้ใช้:',clean(message,4000),
     '',
@@ -42,7 +42,7 @@ export async function enqueueOllamaChat(env:Env, token:string, message:string, s
   const devices=await rest<any[]>(env,token,'devices?select=id,device_name,runtime_id,status,trusted,last_seen_at,capabilities&trusted=eq.true&limit=30').catch(()=>[]);
   const device=selectOllamaDevice(devices);
   if(!device)return null;
-  const chosenModel=clean(model||env.OLLAMA_CHAT_MODEL||'qwen3:4b',120)||'qwen3:4b';
+  const chosenModel=clean(model||env.OLLAMA_CHAT_MODEL||'qwen2.5vl:3b',120)||'qwen2.5vl:3b';
   const key=clean(idempotencyKey,200)||('chat-'+crypto.randomUUID());
   const payload={
     device_id:device.id,

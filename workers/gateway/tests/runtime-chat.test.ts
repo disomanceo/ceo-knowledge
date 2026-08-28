@@ -26,6 +26,12 @@ describe('Ollama runtime chat router',()=>{
     expect(prompt).toContain('PMS');
     expect(prompt).toContain('ห้ามแต่งข้อมูลส่วนบุคคล');
   });
+  it('does not inject qwen3 control token into the faster qwen2.5 fallback model',()=>{
+    const prompt=buildOllamaChatPrompt('สวัสดี',[],'qwen2.5vl:3b');
+    expect(prompt).toContain('Provider=Ollama, Model=qwen2.5vl:3b');
+    expect(prompt).not.toContain('/no_think');
+  });
+
   it('extracts completed ollama job answers and rejects unavailable results',()=>{
     expect(ollamaJobAnswer({status:'completed',result:{available:true,response:'สวัสดีครับ',model:'qwen3:4b'}})).toEqual({ok:true,answer:'สวัสดีครับ',provider:'ollama',model:'qwen3:4b',reason:'READY'});
     expect(ollamaJobAnswer({status:'completed',result:{available:false,reason:'OLLAMA_MODEL_NOT_INSTALLED',model:'x'}}).ok).toBe(false);

@@ -14,11 +14,11 @@
 - Supabase Auth reuse
 - Cloudflare Worker gateway
 - React/Vite/Tailwind PWA
-- Chat / Today / Memory / Tasks / Graph / Devices
+- Console-first Remote Console / Chat fallback / Today / Memory / Tasks / Graph / Drive / Devices
 - Graph reads authenticated `ceo_knowledge` data directly from Supabase under RLS so it does not depend on a running PC/Runtime
 - profiles / reminders / audit tables
 
-Next validation: login from an actual phone, create/read Memory and Tasks, verify Today while all PCs are off, then add Web Push scheduling.
+Product role locked: ChatGPT is the primary conversational brain/UI; Ceo Mobile is Remote Console + Secretary Dashboard. Next validation: login from an actual phone, validate Console/Today/Tasks/Devices and fallback Chat, then add Web Push scheduling.
 
 ## V1.2 — Remote Runtime — CORE E2E DONE
 
@@ -71,12 +71,13 @@ Runtime implementation completed and proven on SCHOOL-PC:
 
 Next implementation order:
 
-1. Enable/test Google OAuth provider for Ceo Drive against a real Drive account.
-2. Ceo Drive V1.1: Runtime handoff for PDF/Office files and optional encrypted refresh-token/background sync design.
-3. Google Calendar connector with explicit sync direction/conflict policy.
-4. Web Push reminders and follow-up scheduler.
-5. Backup/export and restore tooling.
-6. Release hardening and versioned API contract tests between both repositories.
+1. Manual phone validation of the Console-first UX and Recent Remote Jobs.
+2. Add revoke/disable + approval review controls to the Remote Console without exposing raw shell.
+3. Enable/test Google OAuth provider for Ceo Drive against a real Drive account.
+4. Ceo Drive V1.1 Runtime handoff for PDF/Office.
+5. Google Calendar connector with explicit sync/conflict policy.
+6. Web Push reminders and follow-up scheduler.
+7. Backup/export/restore + versioned contract/release hardening.
 
 ## Non-negotiable rule
 
