@@ -18,12 +18,13 @@ export function selectOllamaDevice(devices:any[], now=Date.now()):any|null {
     .sort((a,b)=>Date.parse(String(b.last_seen_at||''))-Date.parse(String(a.last_seen_at||'')))[0]||null;
 }
 
-export function buildOllamaChatPrompt(message:string, searchResults:any[]):string {
+export function buildOllamaChatPrompt(message:string, searchResults:any[], runtimeModel='qwen3:4b'):string {
   const context=(Array.isArray(searchResults)?searchResults:[]).slice(0,8).map((row:any,index:number)=>({
     n:index+1,kind:clean(row?.kind,80),title:clean(row?.title,240),content:clean(row?.content||row?.summary||row?.rationale,1200),score:Number(row?._score||0),
   }));
   return [
     '/no_think',
+    'Runtime metadata: Provider=Ollama, Model='+clean(runtimeModel,120)+'. ถ้าผู้ใช้ถามว่าใช้ AI/provider/model อะไร ให้ตอบจาก Runtime metadata นี้เท่านั้น ไม่ใช้ Knowledge context เดาคำตอบ',
     'คำถามของผู้ใช้:',clean(message,4000),
     '',
     'บริบทจาก Ceo Knowledge (ใช้เมื่อเกี่ยวข้องเท่านั้น):',
@@ -46,7 +47,7 @@ export async function enqueueOllamaChat(env:Env, token:string, message:string, s
   const payload={
     device_id:device.id,
     tool:'ollama.chat',
-    arguments:{prompt:buildOllamaChatPrompt(message,searchResults),task:'general',model:chosenModel,system:ollamaSystemPrompt(),keepAlive:'10m'},
+    arguments:{prompt:buildOllamaChatPrompt(message,searchResults,chosenModel),task:'general',model:chosenModel,system:ollamaSystemPrompt()+' หากคำถามเกี่ยวกับ model/provider/runtime ให้เชื่อ Runtime metadata ใน prompt เหนือกว่า Knowledge context',keepAlive:'10m'},
     status:'pending',approval_state:'not_required',origin:'worker',idempotency_key:key,expires_at:new Date(Date.now()+10*60_000).toISOString(),
   };
   const job=await insertRuntimeJob(env,token,payload);

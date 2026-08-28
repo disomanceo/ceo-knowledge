@@ -19,8 +19,9 @@ describe('Ollama runtime chat router',()=>{
     expect(deviceSupportsOllama({...base,trusted:false},now)).toBe(false);
   });
   it('builds a bounded Ceo Knowledge context without inventing tool execution',()=>{
-    const prompt=buildOllamaChatPrompt('ช่วยคิดชื่อโครงการ',[{kind:'knowledge_entries',title:'PMS',content:'ระบบบริหารโรงเรียน',_score:90}]);
+    const prompt=buildOllamaChatPrompt('ช่วยคิดชื่อโครงการ',[{kind:'knowledge_entries',title:'PMS',content:'ระบบบริหารโรงเรียน',_score:90}],'qwen3:4b');
     expect(prompt).toContain('/no_think');
+    expect(prompt).toContain('Provider=Ollama, Model=qwen3:4b');
     expect(prompt).toContain('ช่วยคิดชื่อโครงการ');
     expect(prompt).toContain('PMS');
     expect(prompt).toContain('ห้ามแต่งข้อมูลส่วนบุคคล');
