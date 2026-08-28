@@ -49,6 +49,8 @@ Database foundation deployed:
 
 Runtime implementation completed and proven on SCHOOL-PC:
 
+- Hybrid `knowledge.recall` merges keyword + semantic retrieval with bounded scoring and keyword fallback
+- semantic chunk duplicates collapse to one Knowledge result; project-scoped queries stay keyword-only until vector project filtering exists
 - `knowledge.ingest_file`: Active Project file -> document.read -> source/hash -> extraction -> knowledge -> chunks -> Supabase
 - original binary/source file remains local; Supabase receives extracted text/knowledge and source metadata only
 - local Ollama extraction with `qwen3:4b`, with deterministic fallback when Ollama is unavailable

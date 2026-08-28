@@ -56,6 +56,14 @@ Ceo Knowledge คือส่วนความจำและเลขาส่
 
 Remote V1.2 ไม่มี raw PowerShell จากมือถือ รายการที่อนุญาตเริ่มจากงานอ่าน/ตรวจสอบ เช่น runtime status, system info, knowledge recall, events/tasks, document read, filesystem read, Ollama status/chat
 
+## Hybrid Recall — ค้นทั้งคำตรงและความหมาย
+
+คำสั่ง `knowledge.recall` จะค้นแบบ Keyword ก่อน แล้วถ้าเครื่องมี Ollama + embedding พร้อม ระบบจะค้น Semantic เพิ่มและรวมผลให้เอง ตัวอย่างเช่น เอกสารต้นฉบับเป็นภาษาอังกฤษ แต่ถามเป็นภาษาไทยด้วยความหมายใกล้เคียงก็ยังค้นเจอได้
+
+ถ้า Ollama/embedding ใช้ไม่ได้ ระบบจะกลับไปใช้ Keyword เดิมโดยอัตโนมัติ ไม่ทำให้ Ceo Knowledge ล้ม และหากต้องการบังคับแบบ Keyword อย่างเดียวสามารถส่ง `semantic: false` ได้
+
+เพื่อความปลอดภัย หากระบุ `projectId` ปัจจุบันระบบจะยังใช้ Keyword-only ก่อน จนกว่าจะเพิ่ม project filter ลง semantic RPC โดยตรง เพื่อไม่ให้ผล vector จากโปรเจกต์อื่นปะปน
+
 ## นำไฟล์ Local เข้า Ceo Knowledge (V2)
 
 V2 รองรับการเรียนรู้จากไฟล์ที่อยู่ใน Active Project ของ Ceo Runtime แล้ว เช่น Markdown, TXT, JSON, CSV, PDF และ Office ที่ document engine รองรับ โดยหลักการคือ:
