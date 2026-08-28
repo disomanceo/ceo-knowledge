@@ -32,3 +32,8 @@ body { min-width:320px; }
 .graph-label { fill:#cbd2df; font-size:12px; pointer-events:none; user-select:none; }
 .graph-list-active { border-color:#f4c95d; box-shadow:0 0 0 1px rgba(244,201,93,.15); }
 @media (max-width:520px) { .graph-canvas { min-height:290px; } .graph-label { font-size:11px; } }
+
+.chat-shell { height:calc(100dvh - 190px); min-height:300px; }
+.chat-composer { padding-bottom:10px; }
+.drive-preview { max-height:320px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; background:#0d1017; border:1px solid #282f3e; border-radius:14px; padding:12px; font:12px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace; color:#d8deea; }
+@media (max-height:640px) { .chat-shell { height:calc(100dvh - 176px); min-height:250px; } }

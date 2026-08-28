@@ -1,10 +1,11 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, safeLimit, searchOr, sha256Hex } from './security';
+import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 
 const corsHeaders: HeadersInit = {
   'access-control-allow-origin': '*',
-  'access-control-allow-headers': 'authorization, content-type, x-request-id',
+  'access-control-allow-headers': 'authorization, content-type, x-request-id, x-ceo-drive-token',
   'access-control-allow-methods': 'GET, POST, PATCH, OPTIONS',
   'access-control-max-age': '86400',
 };
@@ -222,6 +223,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const llm = await maybeLlm(env, message, search.results);
       return ok({ intent: 'recall', answer: llm || formatChatSearch(search), search, ai: Boolean(llm) });
     }
+
+    if (url.pathname === '/api/drive/config' && request.method === 'GET') return ok(await ceoDriveConfig(env));
+    if (url.pathname === '/api/drive/status' && request.method === 'GET') return ok(await ceoDriveStatus(driveProviderToken(request)));
+    if (url.pathname === '/api/drive/files' && request.method === 'GET') return ok(await ceoDriveFiles(driveProviderToken(request), { q: clean(url.searchParams.get('q'), 200), folderId: clean(url.searchParams.get('folderId'), 200), pageToken: clean(url.searchParams.get('pageToken'), 1000), pageSize: safeLimit(url.searchParams.get('limit'), 40, 100) }));
+    if (url.pathname === '/api/drive/preview' && request.method === 'GET') return ok(await ceoDrivePreview(driveProviderToken(request), clean(url.searchParams.get('fileId'), 200)));
+    if (url.pathname === '/api/drive/import' && request.method === 'POST') { const body = await jsonBody<{ fileId?: string }>(request); return ok(await ceoDriveImport(env, token, driveProviderToken(request), clean(body.fileId, 200)), 201); }
 
     if (url.pathname === '/api/devices' && request.method === 'GET') {
       const devices = await rest<DeviceRecord[]>(env, token, `devices${qs({ select: 'id,device_key,device_name,device_type,runtime_id,status,capabilities,last_seen_at,trusted,paired_at,disabled_at,created_at,updated_at', order: 'updated_at.desc', limit: 100 })}`);

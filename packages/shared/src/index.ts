@@ -88,6 +88,47 @@ export interface DeviceRecord {
   paired_at: string | null;
 }
 
+export type CeoDriveImportMode = 'folder' | 'cloud-text' | 'runtime-required' | 'unsupported';
+
+export interface CeoDriveFile {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number | null;
+  modifiedTime: string | null;
+  createdTime: string | null;
+  webViewLink: string;
+  parents: string[];
+  canDownload: boolean;
+  importMode: CeoDriveImportMode;
+}
+
+export interface CeoDriveConfig {
+  provider: 'google';
+  enabled: boolean;
+  scope: string;
+  tokenPersistence: 'browser-session-only';
+  importableTypes: string[];
+}
+
+export interface CeoDrivePreview {
+  file: CeoDriveFile;
+  importable: boolean;
+  reason: string;
+  exportMimeType: string;
+  content: string;
+  truncated: boolean;
+}
+
+export interface CeoDriveImportResult {
+  file: CeoDriveFile;
+  sourceId: string;
+  knowledgeId: string;
+  ingestRunId: string | null;
+  chunks: number;
+  updated: boolean;
+}
+
 export interface KnowledgeGraphNode {
   id: string;
   title: string;

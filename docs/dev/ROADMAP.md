@@ -69,11 +69,12 @@ Runtime implementation completed and proven on SCHOOL-PC:
 
 Next implementation order:
 
-1. Google Drive connector for selected documents.
-2. Google Calendar connector with explicit sync direction/conflict policy.
-3. Web Push reminders and follow-up scheduler.
-4. Backup/export and restore tooling.
-5. Release hardening and versioned API contract tests between both repositories.
+1. Enable/test Google OAuth provider for Ceo Drive against a real Drive account.
+2. Ceo Drive V1.1: Runtime handoff for PDF/Office files and optional encrypted refresh-token/background sync design.
+3. Google Calendar connector with explicit sync direction/conflict policy.
+4. Web Push reminders and follow-up scheduler.
+5. Backup/export and restore tooling.
+6. Release hardening and versioned API contract tests between both repositories.
 
 ## Non-negotiable rule
 

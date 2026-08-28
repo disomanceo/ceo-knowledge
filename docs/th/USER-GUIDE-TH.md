@@ -13,7 +13,7 @@ Ceo Knowledge คือส่วนความจำและเลขาส่
 
 1. เปิด Ceo Mobile ใน Chrome/Safari บนมือถือหรือคอมพิวเตอร์
 2. Login ด้วยบัญชี Supabase/Ceo เดิม
-3. เมื่อ Login สำเร็จ จะเห็น 6 หน้า: Chat, Today, Memory, Tasks, Graph และ Devices
+3. เมื่อ Login สำเร็จ จะเห็น 7 หน้า: Chat, Today, Memory, Tasks, Graph, Drive และ Devices
 
 ## หน้า Chat
 
@@ -69,6 +69,30 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 หน้า **Graph** แสดง Knowledge เป็นจุดและความสัมพันธ์เป็นเส้นแบบ SVG โดยไม่ติดตั้ง graph library ขนาดใหญ่ สามารถกดจุดเพื่อดูรายละเอียด, tags, จำนวนความสัมพันธ์ และกดไปยัง Knowledge ที่เชื่อมกันได้ รวมทั้งสลับเป็นมุมมองรายการและค้นจากหัวข้อ / topic / tag / type ได้
 
 หน้า Graph อ่าน `knowledge_entries` และ `knowledge_links` จาก Supabase Cloud โดยตรงด้วย session ของผู้ใช้ และถูกจำกัดด้วย RLS `auth.uid() = user_id` จึงดูได้แม้ PC/Runtime ทุกเครื่องปิด และไม่มี `service_role` อยู่ใน Mobile
+
+## Ceo Drive — นำเอกสาร Cloud เข้า Ceo Knowledge
+
+หน้า **Drive** เป็น Connector ของ Ceo เอง โดย Google Drive เป็น backend ตัวแรก ใช้สิทธิ์ **อ่านอย่างเดียว** และ Ceo จะไม่ import ไฟล์ใดจนกว่าผู้ใช้กดเลือก/Preview/Import เอง
+
+หลักความปลอดภัยของ V1:
+
+- Google provider token อยู่ใน browser session เท่านั้น ไม่เก็บใน Supabase/Worker DB
+- Worker ไม่ใช้ `service_role`
+- ไม่เก็บ Google refresh token ถาวรใน V1
+- Google Docs/Sheets/Slides และไฟล์ข้อความสามารถ Preview/Import บน Cloud ได้
+- PDF/Word/Excel/PowerPoint จะแจ้ง **Runtime required** เพื่อให้ Ceo Runtime เป็นตัวอ่านในรุ่นถัดไป
+- ไฟล์ต้นฉบับบน Drive ไม่ถูกอัปโหลดเป็น binary ไป Supabase; เก็บเฉพาะข้อความที่ผู้ใช้เลือก import และ source metadata
+
+ขั้นตอนใช้งานหลังเปิด Google provider:
+
+1. เปิด Drive > Connect Ceo Drive
+2. อนุญาต scope Drive read-only
+3. เลือกโฟลเดอร์หรือค้นไฟล์
+4. กด Preview ก่อน
+5. ถ้าเป็นชนิดที่รองรับ กด Import เข้า Ceo Knowledge
+6. หลัง Import จะเห็น Knowledge ID และจำนวน chunks
+
+ขณะนี้ Maple ยังไม่ได้เปิด Google OAuth provider ดังนั้นหน้า Drive ต้องแสดง **Setup Required** จนกว่าจะตั้ง Google OAuth Client ใน Supabase หนึ่งครั้ง รายละเอียดอยู่ที่ `docs/dev/CEO-DRIVE.md`
 
 ## Ceo Local Notes — โน้ต Markdown ของ Ceo
 

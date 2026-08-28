@@ -1,4 +1,4 @@
-import type { ApiEnvelope, DeviceRecord, EventRecord, MemoryRecord, TaskRecord } from '@ceo-knowledge/shared';
+import type { ApiEnvelope, CeoDriveConfig, CeoDriveFile, CeoDriveImportResult, CeoDrivePreview, DeviceRecord, EventRecord, MemoryRecord, TaskRecord } from '@ceo-knowledge/shared';
 import { supabase } from './supabase';
 
 const API_URL = (import.meta.env.VITE_API_URL || 'https://ceo.disomanceo.workers.dev').replace(/\/$/, '');
@@ -40,4 +40,9 @@ export const api = {
   runJob: (deviceId: string, tool: string, args: Record<string, unknown> = {}) => request<any>('/api/runtime/jobs', { method: 'POST', body: JSON.stringify({ deviceId, tool, arguments: args }) }),
   job: (id: string) => request<any>(`/api/runtime/jobs/${id}`),
   search: (q: string) => request<any>(`/api/search?q=${encodeURIComponent(q)}`),
+  driveConfig: () => request<CeoDriveConfig>('/api/drive/config'),
+  driveStatus: (driveToken: string) => request<any>('/api/drive/status', { headers: { 'x-ceo-drive-token': driveToken } }),
+  driveFiles: (driveToken: string, q = '', folderId = '') => request<{ files: CeoDriveFile[]; nextPageToken: string }>(`/api/drive/files?limit=60${q?`&q=${encodeURIComponent(q)}`:''}${folderId?`&folderId=${encodeURIComponent(folderId)}`:''}`, { headers: { 'x-ceo-drive-token': driveToken } }),
+  drivePreview: (driveToken: string, fileId: string) => request<CeoDrivePreview>(`/api/drive/preview?fileId=${encodeURIComponent(fileId)}`, { headers: { 'x-ceo-drive-token': driveToken } }),
+  driveImport: (driveToken: string, fileId: string) => request<CeoDriveImportResult>('/api/drive/import', { method:'POST', headers: { 'x-ceo-drive-token': driveToken }, body: JSON.stringify({ fileId }) }),
 };
