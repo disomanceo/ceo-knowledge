@@ -6,6 +6,10 @@ describe('shared contracts', () => {
     expect(REMOTE_SAFE_TOOLS).not.toContain('process.run' as never);
     expect(REMOTE_SAFE_TOOLS).not.toContain('shell.execute' as never);
     expect(isRemoteSafeTool('runtime.status')).toBe(true);
+    expect(isRemoteSafeTool('knowledge.semantic_search')).toBe(true);
+    expect(isRemoteSafeTool('knowledge.graph')).toBe(true);
+    expect(isRemoteSafeTool('knowledge.sources')).toBe(true);
+    expect(isRemoteSafeTool('knowledge.ingest_file')).toBe(false);
     expect(isRemoteSafeTool('process.run')).toBe(false);
   });
 

@@ -27,7 +27,7 @@ Desktop Runtime, MCP tools, local files, Ollama and the outbound Device Agent re
 - V1.0 Secretary Brain: implemented and proven.
 - V1.1 Cloud/Mobile foundation: deployed.
 - V1.2 Remote Runtime foundation: database + Device Agent E2E proven.
-- V2.0 Knowledge Expansion foundation: pgvector, chunks, graph, revisions, ingest/sync tables deployed. Ingestion/connectors still require implementation/testing.
+- V2.0 Knowledge Expansion: pgvector foundation deployed; Desktop Runtime file ingestion, local Ollama extraction, 768-d embeddings and semantic search are now E2E proven. Hybrid retrieval, graph auto-linking and connectors remain next.
 
 ## Verify locally
 

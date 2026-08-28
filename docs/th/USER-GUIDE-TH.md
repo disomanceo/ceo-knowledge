@@ -56,6 +56,24 @@ Ceo Knowledge คือส่วนความจำและเลขาส่
 
 Remote V1.2 ไม่มี raw PowerShell จากมือถือ รายการที่อนุญาตเริ่มจากงานอ่าน/ตรวจสอบ เช่น runtime status, system info, knowledge recall, events/tasks, document read, filesystem read, Ollama status/chat
 
+## นำไฟล์ Local เข้า Ceo Knowledge (V2)
+
+V2 รองรับการเรียนรู้จากไฟล์ที่อยู่ใน Active Project ของ Ceo Runtime แล้ว เช่น Markdown, TXT, JSON, CSV, PDF และ Office ที่ document engine รองรับ โดยหลักการคือ:
+
+1. Ceo อ่านไฟล์ผ่าน `document.read` ภายใต้ Active Project boundary เดิม
+2. เก็บ Source metadata, path, hash และสถานะไฟล์
+3. ใช้ Ollama ในเครื่องสกัดหัวข้อ/สรุป/ข้อมูลสำคัญเมื่อพร้อม
+4. แบ่งเนื้อหาเป็น Knowledge Chunks
+5. สร้าง embedding 768 มิติด้วย `nomic-embed-text` เมื่อโมเดลพร้อม
+6. บันทึก Knowledge/Chunks ลง Supabase schema `ceo_knowledge`
+7. หาก ingest ไฟล์เดิมใหม่ด้วยการแบ่ง chunk แบบใหม่ ระบบจะเก็บชุดใหม่ให้สำเร็จก่อน แล้ว archive chunks เก่าที่ไม่ใช้แล้ว เพื่อลดผลค้นซ้ำจากข้อมูลเก่า
+
+**ไฟล์ต้นฉบับไม่ได้ถูกอัปโหลดขึ้น Supabase โดยอัตโนมัติ** และ Ceo จะไม่ข้าม Active Project boundary เพื่ออ่านไฟล์นอกโปรเจกต์ หากต้องการเรียนรู้จากโฟลเดอร์อื่น ให้เปลี่ยน/Bind Active Project ตามระบบ Ceo ก่อน
+
+ถ้า Ollama หรือ embedding model ไม่พร้อม ระบบยัง ingest แบบ text/metadata ได้และไม่ทำให้ Runtime หลักล้ม ปัจจุบัน workflow นี้ใช้งานผ่าน Ceo Runtime/MCP ก่อน ส่วน Mobile file-picker/import UI เป็นงานรอบถัดไป
+
+Remote Runtime อนุญาตให้มือถือเรียก Semantic Search / Graph / Source metadata แบบอ่านอย่างเดียวได้ แต่ **ยังไม่อนุญาต `knowledge.ingest_file` จากมือถือ** เพื่อไม่เปิดสิทธิ์อ่านไฟล์ Local โดยไม่มี approval flow
+
 ## ถ้าเครื่องปิด
 
 ยังทำได้:
@@ -84,6 +102,6 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 - ถ้าเครื่องสูญหาย ให้ Disable/Revoke device ก่อนใช้ต่อ
 - `service_role` ของ Supabase ห้ามนำไปไว้ใน Mobile หรือ Worker client-side
 
-## สถานะปัจจุบัน 27 สิงหาคม 2569
+## สถานะปัจจุบัน 28 สิงหาคม 2569
 
-V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA deploy แล้ว, V1.2 Remote Runtime queue ทำ E2E ผ่านแล้ว ส่วน V2 โครงฐานข้อมูล pgvector/graph/ingestion ถูก deploy แล้ว แต่ document ingestion/connectors ยังเป็นงานรอบถัดไป
+V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA deploy แล้ว, V1.2 Remote Runtime foundation ทำ E2E ผ่านแล้ว และ V2 File Ingestion + Ollama extraction + 768-d embedding + Semantic Search ทำ E2E ผ่านบน SCHOOL-PC แล้ว งานถัดไปคือ Hybrid Retrieval, Graph auto-link, Connectors, Web Push และ Mobile import UI

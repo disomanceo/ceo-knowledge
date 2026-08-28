@@ -33,9 +33,9 @@ Next validation: login from an actual phone, create/read Memory and Tasks, verif
 
 Next validation: perform the six-digit pairing flow from the deployed Mobile PWA instead of admin bootstrap, then add revoke/disable UI and approval-required mutating tool classes.
 
-## V2.0 — Knowledge Expansion — DATABASE FOUNDATION DONE
+## V2.0 — Knowledge Expansion — RUNTIME INGESTION + SEMANTIC SEARCH E2E DONE
 
-Already deployed:
+Database foundation deployed:
 
 - pgvector
 - 768-dimension knowledge chunks
@@ -47,18 +47,30 @@ Already deployed:
 - connector/sync tables
 - external provider IDs for sources/events
 
+Runtime implementation completed and proven on SCHOOL-PC:
+
+- `knowledge.ingest_file`: Active Project file -> document.read -> source/hash -> extraction -> knowledge -> chunks -> Supabase
+- original binary/source file remains local; Supabase receives extracted text/knowledge and source metadata only
+- local Ollama extraction with `qwen3:4b`, with deterministic fallback when Ollama is unavailable
+- `ollama.embed` provider using `nomic-embed-text:latest` and strict 768-dimension validation
+- chunk embeddings persisted and `knowledge.semantic_search` E2E proven with Thai paraphrase retrieval
+- `knowledge.sources` and `knowledge.graph` read APIs proven
+- file-backed Knowledge dedup now uses source + content, so changing AI/caller title cannot create duplicates
+- re-ingestion reconciles chunk sets and archives stale chunks only after the current chunk set saves successfully
+- Knowledge/embedding/cloud failure remains non-fatal to the main Runtime
+- Active Project boundary remains enforced; ingestion does not bypass the existing filesystem security model
+- V2 read-only semantic/graph/source tools are allowed remotely; file ingestion remains local-only until an explicit approval flow is designed
+
 Next implementation order:
 
-1. Runtime `knowledge.ingest_file`: source registration -> document.read -> chunk -> local Ollama extraction -> save knowledge.
-2. Embedding provider router with local-first fallback and deterministic model metadata.
-3. Hybrid retrieval combining keyword and semantic scores.
-4. Knowledge graph auto-linking and graph UI.
-5. Obsidian connector (local Markdown import/export, no dependency for Core).
-6. Google Drive connector for selected documents.
-7. Google Calendar connector with explicit sync direction/conflict policy.
-8. Web Push reminders and follow-up scheduler.
-9. Backup/export and restore tooling.
-10. Release hardening and versioned API contract tests between both repositories.
+1. Hybrid retrieval combining keyword + semantic scores into one recall path.
+2. Knowledge graph auto-linking and graph UI.
+3. Obsidian connector (local Markdown import/export, no dependency for Core).
+4. Google Drive connector for selected documents.
+5. Google Calendar connector with explicit sync direction/conflict policy.
+6. Web Push reminders and follow-up scheduler.
+7. Backup/export and restore tooling.
+8. Release hardening and versioned API contract tests between both repositories.
 
 ## Non-negotiable rule
 
