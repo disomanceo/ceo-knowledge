@@ -21,14 +21,14 @@ describe('Ollama runtime chat router',()=>{
   it('builds a bounded Ceo Knowledge context without inventing tool execution',()=>{
     const prompt=buildOllamaChatPrompt('ช่วยคิดชื่อโครงการ',[{kind:'knowledge_entries',title:'PMS',content:'ระบบบริหารโรงเรียน',_score:90}],'qwen3:4b');
     expect(prompt).toContain('/no_think');
-    expect(prompt).toContain('Provider=Ollama, Model=qwen3:4b');
+    expect(prompt).toContain('Provider=Ollama, Model=qwen3:4b, Status=READY');
     expect(prompt).toContain('ช่วยคิดชื่อโครงการ');
     expect(prompt).toContain('PMS');
     expect(prompt).toContain('ห้ามแต่งข้อมูลส่วนบุคคล');
   });
   it('does not inject qwen3 control token into the faster qwen2.5 fallback model',()=>{
     const prompt=buildOllamaChatPrompt('สวัสดี',[],'qwen2.5vl:3b');
-    expect(prompt).toContain('Provider=Ollama, Model=qwen2.5vl:3b');
+    expect(prompt).toContain('Provider=Ollama, Model=qwen2.5vl:3b, Status=READY');
     expect(prompt).not.toContain('/no_think');
   });
 

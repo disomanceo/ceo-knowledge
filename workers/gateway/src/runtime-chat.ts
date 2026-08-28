@@ -24,7 +24,7 @@ export function buildOllamaChatPrompt(message:string, searchResults:any[], runti
   }));
   return [
     ...(runtimeModel.toLowerCase().startsWith('qwen3') ? ['/no_think'] : []),
-    'Runtime metadata: Provider=Ollama, Model='+clean(runtimeModel,120)+'. ถ้าผู้ใช้ถามว่าใช้ AI/provider/model อะไร ให้ตอบจาก Runtime metadata นี้เท่านั้น ไม่ใช้ Knowledge context เดาคำตอบ',
+    'Runtime metadata: Provider=Ollama, Model='+clean(runtimeModel,120)+', Status=READY. ถ้าผู้ใช้ถามว่าใช้ AI/provider/model/สถานะพร้อมหรือไม่ ให้ตอบจาก Runtime metadata นี้เท่านั้น ไม่ใช้ Knowledge context เดาคำตอบ',
     'คำถามของผู้ใช้:',clean(message,4000),
     '',
     'บริบทจาก Ceo Knowledge (ใช้เมื่อเกี่ยวข้องเท่านั้น):',
