@@ -50,6 +50,7 @@ Database foundation deployed:
 
 Runtime implementation completed and proven on SCHOOL-PC:
 
+- Ceo Local Notes native Markdown scan/import is E2E proven; it uses no third-party notes SDK/API/runtime and defaults bulk import to dry-run
 - Mobile Graph visualization source is implemented with native SVG, active-node filtering, graph/list modes and direct authenticated Supabase RLS reads
 - semantic Knowledge Graph auto-link is E2E proven with canonical pair dedup and active-node filtering
 - Hybrid `knowledge.recall` merges keyword + semantic retrieval with bounded scoring and keyword fallback
@@ -68,12 +69,11 @@ Runtime implementation completed and proven on SCHOOL-PC:
 
 Next implementation order:
 
-1. Obsidian connector (local Markdown import/export, no dependency for Core).
-2. Google Drive connector for selected documents.
-3. Google Calendar connector with explicit sync direction/conflict policy.
-4. Web Push reminders and follow-up scheduler.
-5. Backup/export and restore tooling.
-6. Release hardening and versioned API contract tests between both repositories.
+1. Google Drive connector for selected documents.
+2. Google Calendar connector with explicit sync direction/conflict policy.
+3. Web Push reminders and follow-up scheduler.
+4. Backup/export and restore tooling.
+5. Release hardening and versioned API contract tests between both repositories.
 
 ## Non-negotiable rule
 

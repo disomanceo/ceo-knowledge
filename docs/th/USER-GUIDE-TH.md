@@ -70,6 +70,19 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 
 หน้า Graph อ่าน `knowledge_entries` และ `knowledge_links` จาก Supabase Cloud โดยตรงด้วย session ของผู้ใช้ และถูกจำกัดด้วย RLS `auth.uid() = user_id` จึงดูได้แม้ PC/Runtime ทุกเครื่องปิด และไม่มี `service_role` อยู่ใน Mobile
 
+## Ceo Local Notes — โน้ต Markdown ของ Ceo
+
+Ceo Local Notes เป็นระบบของ Ceo เองสำหรับอ่านและนำเข้าไฟล์ Markdown มาตรฐานจาก Active Project โดย **ไม่ต้องติดตั้งหรือเชื่อม SDK/API ของแอปจดโน้ตภายนอก**
+
+- รองรับ `.md` และ `.markdown`
+- `knowledge.local_notes_scan` ใช้ค้นไฟล์ Markdown แบบ bounded
+- `knowledge.local_notes_import` ใช้นำเข้า โดยค่าเริ่มต้นเป็น `dryRun: true` เพื่อให้เห็นแผนก่อน
+- เมื่อ import จริง จะใช้ pipeline เดิมของ Ceo: Source → Knowledge → Chunks → Embedding → Graph
+- ไฟล์ต้นฉบับยังอยู่ในเครื่อง ไม่ถูกอัปโหลดเป็นไฟล์ขึ้น Supabase
+- bulk import ไม่อยู่ใน Remote Safe Allowlist จึงไม่เปิดให้มือถือกวาดโฟลเดอร์ Local โดยตรง
+
+แนวทางนี้ทำให้ Ceo ใช้โฟลเดอร์ Markdown ใด ๆ เป็นฐานโน้ตได้ โดยไม่ผูกการทำงานกับผลิตภัณฑ์หรือ runtime ของผู้ให้บริการรายอื่น
+
 ## Hybrid Recall — ค้นทั้งคำตรงและความหมาย
 
 คำสั่ง `knowledge.recall` จะค้นแบบ Keyword ก่อน แล้วถ้าเครื่องมี Ollama + embedding พร้อม ระบบจะค้น Semantic เพิ่มและรวมผลให้เอง ตัวอย่างเช่น เอกสารต้นฉบับเป็นภาษาอังกฤษ แต่ถามเป็นภาษาไทยด้วยความหมายใกล้เคียงก็ยังค้นเจอได้
@@ -127,4 +140,4 @@ Remote Runtime อนุญาตให้มือถือเรียก Sema
 
 ## สถานะปัจจุบัน 28 สิงหาคม 2569
 
-V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA foundation deploy แล้ว, V1.2 Remote Runtime foundation ทำ E2E ผ่านแล้ว และ V2 File Ingestion + Semantic Search + Hybrid Recall + Graph Auto-link ทำ E2E ผ่านแล้ว ส่วน Graph UI สำหรับ Mobile/Web เขียนและ verify ผ่านแล้ว โดยอ่าน Cloud ผ่าน Supabase RLS งานถัดไปคือ Obsidian/Google connectors, Web Push และ Mobile import UI
+V1.0 Secretary Brain ใช้งานจริงแล้ว, V1.1 Worker/PWA foundation deploy แล้ว, V1.2 Remote Runtime foundation ทำ E2E ผ่านแล้ว และ V2 File Ingestion + Semantic Search + Hybrid Recall + Graph Auto-link ทำ E2E ผ่านแล้ว ส่วน Graph UI สำหรับ Mobile/Web เขียนและ verify ผ่านแล้ว โดยอ่าน Cloud ผ่าน Supabase RLS งานถัดไปคือ Google Drive/Calendar connectors, Web Push และ Mobile import UI

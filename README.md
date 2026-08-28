@@ -15,6 +15,8 @@ This repository owns cloud-facing Ceo Knowledge code:
 
 Desktop Runtime, MCP tools, local files, Ollama and the outbound Device Agent remain in the separate `Ceo-MCP-Agent` repository.
 
+Ceo Local Notes is Ceo-owned Markdown workspace functionality and does not depend on a third-party notes SDK/API/runtime.
+
 ## Production endpoints
 
 - Worker API: `https://ceo.disomanceo.workers.dev`
@@ -27,7 +29,7 @@ Desktop Runtime, MCP tools, local files, Ollama and the outbound Device Agent re
 - V1.0 Secretary Brain: implemented and proven.
 - V1.1 Cloud/Mobile foundation: deployed.
 - V1.2 Remote Runtime foundation: database + Device Agent E2E proven.
-- V2.0 Knowledge Expansion: file ingestion, 768-d semantic search, Hybrid Recall and semantic Graph auto-linking are E2E proven. Mobile Graph visualization is implemented and verified with direct Supabase RLS reads; connectors remain next.
+- V2.0 Knowledge Expansion: file ingestion, 768-d semantic search, Hybrid Recall, semantic Graph auto-linking and Ceo Local Notes are E2E proven. Mobile Graph visualization is implemented and verified with direct Supabase RLS reads; Google connectors remain next.
 
 ## Verify locally
 
