@@ -3,6 +3,7 @@ import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, safeLimit, 
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback } from './chat';
 import { enqueueOllamaChat } from './runtime-chat';
+import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 
 const corsHeaders: HeadersInit = {
@@ -244,8 +245,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const devices = await rest<DeviceRecord[]>(env, token, `devices${qs({ select: 'id,trusted,status,last_seen_at', id: `eq.${deviceId}`, limit: 1 })}`);
       if (!devices[0] || !devices[0].trusted || devices[0].status === 'disabled') throw Object.assign(new Error('DEVICE_NOT_TRUSTED'), { status: 403 });
       const payload = { device_id: deviceId, tool, arguments: body.arguments && typeof body.arguments === 'object' ? body.arguments : {}, status: 'pending', approval_state: 'not_required', origin: 'mobile', idempotency_key: clean(body.idempotencyKey, 200) || newIdempotencyKey(), expires_at: new Date(Date.now() + 15 * 60_000).toISOString() };
-      const rows = await rest<any[]>(env, token, `runtime_jobs${qs({ select: '*', on_conflict: 'user_id,idempotency_key' })}`, { method: 'POST', body: payload, prefer: 'resolution=merge-duplicates,return=representation' });
-      return ok(rows[0] || null, 202);
+      const job = await insertRuntimeJob(env, token, payload);
+      return ok(job, 202);
     }
     const jobMatch = url.pathname.match(/^\/api\/runtime\/jobs\/([0-9a-f-]{36})$/i);
     if (jobMatch && request.method === 'GET') {

@@ -1,5 +1,6 @@
 import type { DeviceRecord } from '@ceo-knowledge/shared';
 import { rest, type Env } from './supabase';
+import { insertRuntimeJob } from './runtime-jobs';
 
 const clean=(value:unknown,max=6000)=>String(value??'').replace(/\u0000/g,'').trim().slice(0,max);
 
@@ -48,8 +49,7 @@ export async function enqueueOllamaChat(env:Env, token:string, message:string, s
     arguments:{prompt:buildOllamaChatPrompt(message,searchResults),task:'general',model:chosenModel,system:ollamaSystemPrompt(),keepAlive:'10m'},
     status:'pending',approval_state:'not_required',origin:'worker',idempotency_key:key,expires_at:new Date(Date.now()+10*60_000).toISOString(),
   };
-  const rows=await rest<any[]>(env,token,'runtime_jobs?select=*&on_conflict=user_id,idempotency_key',{method:'POST',body:payload,prefer:'resolution=merge-duplicates,return=representation'});
-  const job=rows[0]||null;
+  const job=await insertRuntimeJob(env,token,payload);
   if(!job)return null;
   return {job,device:{id:device.id,name:clean(device.device_name,200),runtimeId:clean(device.runtime_id,200)},model:chosenModel};
 }
