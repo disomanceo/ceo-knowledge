@@ -1,6 +1,7 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
+import { cloudChatFallback } from './chat';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 
 const corsHeaders: HeadersInit = {
@@ -111,16 +112,6 @@ async function saveMemory(env: Env, token: string, body: any) {
   return rows[0] || null;
 }
 
-function formatChatSearch(search: Awaited<ReturnType<typeof searchKnowledge>>): string {
-  if (!search.results.length) return 'ยังไม่พบข้อมูลที่เกี่ยวข้องใน Ceo Knowledge';
-  const lines = search.results.slice(0, 5).map((item: any, index) => {
-    const title = clean(item.title || `ข้อมูล ${index + 1}`, 180);
-    const body = clean(item.content || item.summary || item.rationale || '', 350);
-    return `${index + 1}. ${title}${body ? ` — ${body}` : ''}`;
-  });
-  return `พบข้อมูลที่เกี่ยวข้อง:\n${lines.join('\n')}`;
-}
-
 async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<string | null> {
   if (!env.LLM_API_KEY) return null;
   const base = clean(env.LLM_BASE_URL || 'https://api.openai.com/v1', 500).replace(/\/$/, '');
@@ -146,7 +137,7 @@ async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<str
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: env.LLM_API_KEY ? 'cloud-ai' : 'knowledge-only', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -221,7 +212,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       const search = await searchKnowledge(env, token, message, 10);
       const llm = await maybeLlm(env, message, search.results);
-      return ok({ intent: 'recall', answer: llm || formatChatSearch(search), search, ai: Boolean(llm) });
+      const mode = llm ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
+      return ok({ intent: 'recall', answer: llm || cloudChatFallback(message, search.results), search, ai: Boolean(llm), aiConfigured: Boolean(env.LLM_API_KEY), mode });
     }
 
     if (url.pathname === '/api/drive/config' && request.method === 'GET') return ok(await ceoDriveConfig(env));

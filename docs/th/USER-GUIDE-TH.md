@@ -70,6 +70,15 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 
 หน้า Graph อ่าน `knowledge_entries` และ `knowledge_links` จาก Supabase Cloud โดยตรงด้วย session ของผู้ใช้ และถูกจำกัดด้วย RLS `auth.uid() = user_id` จึงดูได้แม้ PC/Runtime ทุกเครื่องปิด และไม่มี `service_role` อยู่ใน Mobile
 
+## Chat บน Cloud
+
+ขณะนี้ Chat บน `ceo-knowledge.pages.dev` ทำงานใน **Ceo Knowledge Mode** เพราะ Worker ยังไม่ได้ตั้งค่า AI Provider สำหรับการสนทนาทั่วไป
+
+- พิมพ์ทักทายหรือถามว่า Ceo ทำอะไรได้ ระบบจะตอบได้ตามปกติ
+- ถามเรื่องที่มีใน Memory / Knowledge / Tasks / Events ระบบจะค้นและตอบจากข้อมูลจริง
+- ถ้าถามเรื่องทั่วไปที่ไม่มีใน Knowledge ระบบจะแจ้งว่าอยู่ใน Knowledge Mode แทนการแสดงข้อความเหมือนระบบเสีย
+- การคุยแบบ AI ทั่วไปต้องเพิ่ม AI Provider ให้ Worker ภายหลัง
+
 ## Ceo Drive — นำเอกสาร Cloud เข้า Ceo Knowledge
 
 หน้า **Drive** เป็น Connector ของ Ceo เอง โดย Google Drive เป็น backend ตัวแรก ใช้สิทธิ์ **อ่านอย่างเดียว** และ Ceo จะไม่ import ไฟล์ใดจนกว่าผู้ใช้กดเลือก/Preview/Import เอง
@@ -92,7 +101,7 @@ Remote V1.2 ไม่มี raw PowerShell จากมือถือ ราย
 5. ถ้าเป็นชนิดที่รองรับ กด Import เข้า Ceo Knowledge
 6. หลัง Import จะเห็น Knowledge ID และจำนวน chunks
 
-ขณะนี้ Maple ยังไม่ได้เปิด Google OAuth provider ดังนั้นหน้า Drive ต้องแสดง **Setup Required** จนกว่าจะตั้ง Google OAuth Client ใน Supabase หนึ่งครั้ง รายละเอียดอยู่ที่ `docs/dev/CEO-DRIVE.md`
+Ceo Drive และหน้า Drive ถูก deploy ขึ้น production แล้ว ขณะนี้ Maple ยังไม่ได้เปิด Google OAuth provider ดังนั้นหน้า Drive จะต้องแสดง **Setup Required** ซึ่งถือเป็นผลทดสอบที่ถูกต้องในสถานะปัจจุบัน จนกว่าจะตั้ง Google OAuth Client ใน Supabase หนึ่งครั้ง รายละเอียดอยู่ที่ `docs/dev/CEO-DRIVE.md`
 
 ## Ceo Local Notes — โน้ต Markdown ของ Ceo
 

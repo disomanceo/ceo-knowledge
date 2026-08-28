@@ -59,6 +59,16 @@ Original Drive files are never uploaded to Supabase as binary files. The cloud i
 - a changed file creates the current fingerprint/content while source metadata is updated
 - chunk rows are upserted and stale active chunks are archived after the current set saves successfully
 
+## Production status
+
+Ceo Drive V1 source is deployed to the production Worker and Mobile PWA. Current production verification after commit `b6126ab`:
+
+- Worker health: OK
+- Pages: HTTP 200
+- Drive routes are protected by normal Ceo/Supabase authentication
+- production Mobile bundle contains Drive UI and Drive read-only OAuth scope
+- Google OAuth provider in Maple is still disabled, so real Google Drive consent/list/preview/import awaits the one-time Google OAuth client setup below
+
 ## One-time Google/Supabase setup required
 
 Maple currently reports `external.google = false`. Ceo Drive source is ready, but real OAuth cannot start until Google Auth is configured in Supabase.
