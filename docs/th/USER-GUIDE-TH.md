@@ -56,6 +56,14 @@ Ceo Knowledge คือส่วนความจำและเลขาส่
 
 Remote V1.2 ไม่มี raw PowerShell จากมือถือ รายการที่อนุญาตเริ่มจากงานอ่าน/ตรวจสอบ เช่น runtime status, system info, knowledge recall, events/tasks, document read, filesystem read, Ollama status/chat
 
+## Knowledge Graph — เชื่อมความรู้ที่เกี่ยวข้องกัน
+
+เมื่อ ingest เอกสารและ embedding พร้อม Ceo สามารถสร้างความสัมพันธ์ `related_to` ระหว่าง Knowledge ที่มีความหมายใกล้กันโดยอัตโนมัติ ค่าเริ่มต้นใช้ similarity อย่างน้อย 0.60 และจำกัดไม่เกิน 5 ความสัมพันธ์ต่อการ ingest หนึ่งครั้ง
+
+ระบบตัด self-match, รวมหลาย chunks ของ Knowledge เดียวกัน และจัดลำดับคู่ ID ให้คงที่เพื่อไม่สร้าง A→B และ B→A ซ้ำ หาก auto-link มีปัญหา เอกสารยัง ingest สำเร็จตามปกติ
+
+คำสั่ง `knowledge.graph` จะแสดงเฉพาะ Knowledge ที่ยัง Active และไม่แสดง link ที่ปลายทางถูกลืม/Archive แล้ว ส่วนหน้า Graph แบบภาพบน Mobile/Web ยังเป็นงานรอบถัดไป
+
 ## Hybrid Recall — ค้นทั้งคำตรงและความหมาย
 
 คำสั่ง `knowledge.recall` จะค้นแบบ Keyword ก่อน แล้วถ้าเครื่องมี Ollama + embedding พร้อม ระบบจะค้น Semantic เพิ่มและรวมผลให้เอง ตัวอย่างเช่น เอกสารต้นฉบับเป็นภาษาอังกฤษ แต่ถามเป็นภาษาไทยด้วยความหมายใกล้เคียงก็ยังค้นเจอได้

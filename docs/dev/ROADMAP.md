@@ -49,6 +49,7 @@ Database foundation deployed:
 
 Runtime implementation completed and proven on SCHOOL-PC:
 
+- semantic Knowledge Graph auto-link is E2E proven with canonical pair dedup and active-node filtering
 - Hybrid `knowledge.recall` merges keyword + semantic retrieval with bounded scoring and keyword fallback
 - semantic chunk duplicates collapse to one Knowledge result; project-scoped queries stay keyword-only until vector project filtering exists
 - `knowledge.ingest_file`: Active Project file -> document.read -> source/hash -> extraction -> knowledge -> chunks -> Supabase
