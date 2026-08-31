@@ -25,6 +25,91 @@ export type TaskStatus = 'open' | 'in_progress' | 'waiting' | 'completed' | 'can
 export type EventStatus = 'planned' | 'completed' | 'cancelled' | 'overdue' | 'snoozed';
 export type MemoryStatus = 'active' | 'outdated' | 'archived' | 'forgotten' | 'superseded';
 
+export const MEMORY_OS_CONTRACT_VERSION = 2 as const;
+export const MEMORY_NODE_TYPES = ['topic','memory','event','task','person','project','place','decision','document','source','summary','claim','conversation'] as const;
+export const MEMORY_KINDS = ['episodic','semantic','procedural','prospective','derived','summary'] as const;
+export const MEMORY_SOURCE_KINDS = ['user','conversation','document','external_api','web','device','ai_derived','system'] as const;
+export const MEMORY_TRUTH_STATUSES = ['observed','reported','forecast','inferred','refuted'] as const;
+export const MEMORY_EVIDENCE_STATUSES = ['unverified','single_source','confirmed','conflicting','refuted'] as const;
+export const MEMORY_EDGE_TYPES = ['CHILD_OF','ABOUT','RELATED_TO','PART_OF','MENTIONS','INVOLVES','OCCURS_AT','DERIVED_FROM','SUPPORTED_BY','CONTRADICTS','CONFIRMS','REFUTES','FOLLOWS','SUPERSEDES'] as const;
+export const MEMORY_MODES = ['CHAT','RECALL','RESEARCH','ACTION','LIVE'] as const;
+
+export type MemoryNodeType = typeof MEMORY_NODE_TYPES[number];
+export type MemoryKind = typeof MEMORY_KINDS[number];
+export type MemorySourceKind = typeof MEMORY_SOURCE_KINDS[number];
+export type MemoryTruthStatus = typeof MEMORY_TRUTH_STATUSES[number];
+export type MemoryEvidenceStatus = typeof MEMORY_EVIDENCE_STATUSES[number];
+export type MemoryEdgeType = typeof MEMORY_EDGE_TYPES[number];
+export type MemoryMode = typeof MEMORY_MODES[number];
+
+export interface MemoryNodeEnvelope {
+  node_id: string;
+  node_type: MemoryNodeType;
+  object_type?: string | null;
+  object_id?: string | null;
+  reference_path: string;
+  title: string;
+  project_id?: string | null;
+  memory_kind?: MemoryKind | null;
+  source_kind: MemorySourceKind;
+  truth_status: MemoryTruthStatus;
+  evidence_status: MemoryEvidenceStatus;
+  topic_ids: string[];
+  entity_ids: string[];
+  source_ids: string[];
+  derived_from: string[];
+  importance: number;
+  retention_policy: 'standard' | 'permanent' | 'temporary';
+  tier: 'hot' | 'warm' | 'cold' | 'pinned';
+  revision: number;
+  content_hash: string;
+  client_event_id?: string | null;
+  event_at?: string | null;
+  date_precision?: string | null;
+  prompt_version?: string | null;
+  model_version?: string | null;
+  embedding_model?: string | null;
+  schema_version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemoryGraphEdge {
+  from_node_id: string;
+  to_node_id: string;
+  relation: MemoryEdgeType;
+  weight: number;
+  source_id?: string | null;
+}
+
+export interface MemoryRecallTrace {
+  mode: string;
+  local: boolean;
+  candidate_count: number;
+  graph_hops: number;
+  markdown_reads: number;
+  global_semantic_search: boolean;
+  latency_ms: number;
+}
+
+export interface MemoryRecallItem {
+  node_id: string;
+  reference_path: string;
+  title: string;
+  content: string;
+  source_ids: string[];
+  truth_status?: MemoryTruthStatus | null;
+  evidence_status?: MemoryEvidenceStatus | null;
+  confidence: number;
+}
+
+export interface MemoryRecallResult {
+  query: string;
+  results: MemoryRecallItem[];
+  trace: MemoryRecallTrace;
+}
+
+
 export interface ApiErrorShape {
   code: string;
   message: string;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { filterActiveKnowledgeGraph, isRemoteSafeTool, layoutKnowledgeGraph, normalizeSearchTokens, REMOTE_SAFE_TOOLS } from '../src/index';
+import { filterActiveKnowledgeGraph, isRemoteSafeTool, layoutKnowledgeGraph, normalizeSearchTokens, REMOTE_SAFE_TOOLS, MEMORY_NODE_TYPES, MEMORY_KINDS, MEMORY_SOURCE_KINDS, MEMORY_TRUTH_STATUSES, MEMORY_EVIDENCE_STATUSES, MEMORY_EDGE_TYPES, MEMORY_MODES } from '../src/index';
 
 describe('shared contracts', () => {
   it('does not expose raw shell/process mutation tools remotely', () => {
@@ -12,7 +12,20 @@ describe('shared contracts', () => {
     expect(isRemoteSafeTool('knowledge.ingest_file')).toBe(false);
     expect(isRemoteSafeTool('knowledge.local_notes_scan')).toBe(false);
     expect(isRemoteSafeTool('knowledge.local_notes_import')).toBe(false);
+    expect(isRemoteSafeTool('memory.local_commit')).toBe(false);
+    expect(isRemoteSafeTool('memory.local_rebuild')).toBe(false);
     expect(isRemoteSafeTool('process.run')).toBe(false);
+  });
+
+  it('keeps Memory OS taxonomy axes separate and bounded', () => {
+    expect(MEMORY_NODE_TYPES).toContain('claim');
+    expect(MEMORY_NODE_TYPES).toContain('conversation');
+    expect(MEMORY_KINDS).toContain('prospective');
+    expect(MEMORY_SOURCE_KINDS).toContain('web');
+    expect(MEMORY_TRUTH_STATUSES).toContain('forecast');
+    expect(MEMORY_EVIDENCE_STATUSES).toContain('conflicting');
+    expect(MEMORY_EDGE_TYPES).toContain('SUPPORTED_BY');
+    expect(MEMORY_MODES).toEqual(['CHAT','RECALL','RESEARCH','ACTION','LIVE']);
   });
 
   it('normalizes and deduplicates search tokens', () => {
