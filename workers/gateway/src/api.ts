@@ -77,6 +77,12 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
     const found = await rest<any[]>(env, token, `${table}${qs({ select, status: 'eq.active', ...(or ? { or } : {}), order: 'updated_at.desc', limit: perTable })}`).catch(() => []);
     rows.push(...found.map(row => ({ ...row, kind: table })));
   }
+  const replicaOr = q ? searchOr(['title','content'], q) : '';
+  const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
+  const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
+  const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')));
+  rows.length = 0;
+  rows.push(...legacyOnly, ...replicaRows.map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
   const tokens = q.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const ranked = rows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
@@ -111,7 +117,39 @@ async function saveMemory(env: Env, token: string, body: any) {
     ...(body.projectId ? { project_id: clean(body.projectId, 80) } : {}),
   };
   const rows = await rest<MemoryRecord[]>(env, token, `memories${qs({ select: '*', on_conflict: 'user_id,fingerprint' })}`, { method: 'POST', body: payload, prefer: 'resolution=merge-duplicates,return=representation' });
-  return rows[0] || null;
+  const memory = rows[0] || null;
+  if (!memory) return null;
+  const nodeDigest = await sha256Hex('memory\u001f' + fingerprint);
+  const nodeId = 'mem_' + nodeDigest.slice(0, 20);
+  const contentHash = await sha256Hex(content);
+  const eventDigest = await sha256Hex([nodeId, '1', contentHash].join('\u001f'));
+  const snapshot = {
+    nodeId, nodeType:'memory', referencePath:`ceo://memory/${nodeId}`, title, content, projectId:clean(body.projectId,80),
+    memoryKind: memoryType === 'rule' ? 'procedural' : 'semantic', sourceKind:'user', truthStatus:'reported', evidenceStatus:'single_source',
+    importance:payload.importance, retentionPolicy:'standard', tier:'hot', topicIds:[], entityIds:[], sourceRefs:[memory.id], derivedFrom:[],
+    eventAt:null, datePrecision:null, revision:1, contentHash, schemaVersion:2, metadata:{ legacyMemoryId:memory.id, origin:'mobile' },
+  };
+  const replica = await rpc<any>(env, token, 'memory_replica_apply', { p_snapshot:snapshot, p_base_revision:0, p_client_event_id:'mem_evt_' + eventDigest.slice(0,24), p_device_id:null });
+  return { ...memory, node_id:nodeId, replica };
+}
+function memoryReplicaAsRecord(row: any): MemoryRecord & { replica: true; node_id: string; reference_path?: string; revision?: number; evidence_status?: string } {
+  return {
+    id: String(row.node_id || ''),
+    title: clean(row.title, 300),
+    content: clean(row.content, 20_000),
+    memory_type: clean(row.memory_kind, 40) || 'note',
+    importance: Math.max(0, Math.min(3, Math.round(Number(row.importance ?? 2)))),
+    scope: row.project_ref ? 'project' : 'global',
+    status: 'active',
+    tags: [],
+    created_at: String(row.created_at || ''),
+    updated_at: String(row.updated_at || ''),
+    replica: true,
+    node_id: String(row.node_id || ''),
+    reference_path: String(row.reference_path || ''),
+    revision: Number(row.revision || 1),
+    evidence_status: String(row.evidence_status || 'unverified'),
+  };
 }
 
 async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<string | null> {
@@ -150,8 +188,14 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/memories' && request.method === 'GET') {
       const query = clean(url.searchParams.get('q'), 240), limit = safeLimit(url.searchParams.get('limit'), 30, 100);
       const or = query ? searchOr(['title', 'content'], query) : '';
-      const memories = await rest<MemoryRecord[]>(env, token, `memories${qs({ select: '*', status: 'eq.active', ...(or ? { or } : {}), order: 'importance.desc,updated_at.desc', limit })}`);
-      return ok({ memories });
+      const [legacy, replicas] = await Promise.all([
+        rest<MemoryRecord[]>(env, token, `memories${qs({ select: '*', status: 'eq.active', ...(or ? { or } : {}), order: 'importance.desc,updated_at.desc', limit })}`),
+        rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,revision,created_at,updated_at', node_type:'eq.memory', ...(or ? { or } : {}), order:'updated_at.desc', limit })}`).catch(() => []),
+      ]);
+      const mirrored = new Set(replicas.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
+      const memories = [...replicas.map(memoryReplicaAsRecord), ...legacy.filter(row => !mirrored.has(row.id))]
+        .sort((x,y)=>String(y.updated_at||'').localeCompare(String(x.updated_at||''))).slice(0,limit);
+      return ok({ memories, replicaCount:replicas.length });
     }
     if (url.pathname === '/api/memories' && request.method === 'POST') return ok(await saveMemory(env, token, await jsonBody<any>(request)), 201);
     const forgetMatch = url.pathname.match(/^\/api\/memories\/([0-9a-f-]{36})\/forget$/i);
@@ -160,6 +204,33 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok(rows[0] || null);
     }
 
+    if (url.pathname === '/api/memory/replicas' && request.method === 'GET') {
+      const after = clean(url.searchParams.get('after'), 100) || '1970-01-01T00:00:00.000Z';
+      if (Number.isNaN(Date.parse(after))) throw Object.assign(new Error('MEMORY_AFTER_INVALID'), { status:400 });
+      const replicas = await rpc<any[]>(env, token, 'memory_replica_pull', { p_after:new Date(after).toISOString(), p_limit:safeLimit(url.searchParams.get('limit'),200,500) });
+      return ok({ after, replicas:Array.isArray(replicas) ? replicas : [] });
+    }
+    if (url.pathname === '/api/memory/conflicts' && request.method === 'GET') {
+      const status = clean(url.searchParams.get('status'),20) || 'pending';
+      if (!['pending','resolved','superseded'].includes(status)) throw Object.assign(new Error('MEMORY_CONFLICT_STATUS_INVALID'), { status:400 });
+      const conflicts = await rest<any[]>(env, token, `memory_conflicts${qs({ select:'*', status:'eq.'+status, order:'created_at.desc', limit:safeLimit(url.searchParams.get('limit'),100,200) })}`);
+      return ok({ conflicts });
+    }
+    const conflictResolve = url.pathname.match(/^\/api\/memory\/conflicts\/([0-9a-f-]{36})\/resolve$/i);
+    if (conflictResolve && request.method === 'POST') {
+      const body = await jsonBody<any>(request), resolution = clean(body.resolution,20);
+      if (!['local','cloud','merge'].includes(resolution)) throw Object.assign(new Error('MEMORY_CONFLICT_RESOLUTION_INVALID'), { status:400 });
+      const snapshot = body.snapshot && typeof body.snapshot === 'object' && !Array.isArray(body.snapshot) ? body.snapshot : null;
+      if (resolution !== 'cloud' && !snapshot) throw Object.assign(new Error('MEMORY_CONFLICT_SNAPSHOT_REQUIRED'), { status:400 });
+      const eventHash = await sha256Hex([conflictResolve[1],resolution,JSON.stringify(snapshot || {})].join('\u001f'));
+      const result = await rpc<any>(env, token, 'memory_conflict_resolve', { p_conflict_id:conflictResolve[1], p_resolution:resolution, p_snapshot:snapshot, p_client_event_id:'mem_resolve_'+eventHash.slice(0,24) });
+      return ok(result);
+    }
+    const provenanceMatch = url.pathname.match(/^\/api\/memory\/nodes\/((?:topic|mem|evt|task|person|project|place|decision|doc|src|summary|claim|conv)_[A-Za-z0-9_-]{8,80})\/provenance$/);
+    if (provenanceMatch && request.method === 'GET') {
+      const provenance = await rpc<any[]>(env, token, 'memory_provenance_get', { p_node_id:provenanceMatch[1] });
+      return ok({ nodeId:provenanceMatch[1], provenance:Array.isArray(provenance) ? provenance : [] });
+    }
     if (url.pathname === '/api/tasks' && request.method === 'GET') {
       const status = clean(url.searchParams.get('status'), 40), limit = safeLimit(url.searchParams.get('limit'), 50, 100);
       const tasks = await rest<TaskRecord[]>(env, token, `tasks${qs({ select: '*', ...(status ? { status: `eq.${status}` } : {}), order: 'updated_at.desc', limit })}`);

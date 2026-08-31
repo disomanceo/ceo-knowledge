@@ -74,6 +74,53 @@ export interface MemoryNodeEnvelope {
   updated_at: string;
 }
 
+export interface MemorySyncEvent {
+  id: string;
+  client_event_id: string;
+  node_id: string;
+  direction: 'local_to_cloud' | 'cloud_to_local' | 'resolution';
+  base_revision: number;
+  revision: number;
+  content_hash: string;
+  status: 'accepted' | 'duplicate' | 'no_change' | 'conflict' | 'resolved';
+  detail: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface MemoryConflictRecord {
+  id: string;
+  node_id: string;
+  client_event_id: string;
+  base_revision: number;
+  local_revision: number;
+  cloud_revision: number;
+  local_snapshot: Record<string, unknown>;
+  cloud_snapshot: Record<string, unknown>;
+  status: 'pending' | 'resolved' | 'superseded';
+  resolution: 'local' | 'cloud' | 'merge' | null;
+  resolution_snapshot: Record<string, unknown> | null;
+  created_at: string;
+  resolved_at: string | null;
+}
+
+export interface MemoryProvenanceRecord {
+  relation: 'SOURCE' | 'DERIVED_FROM' | 'SUPPORTED_BY' | 'CONTRADICTS';
+  source_ref: string;
+  source_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface MemoryReplicaApplyResult {
+  outcome: 'accepted' | 'duplicate' | 'no_change' | 'conflict' | 'resolved';
+  nodeId: string;
+  revision: number;
+  eventId?: string;
+  conflictId?: string;
+  snapshot?: Record<string, unknown> | null;
+  localSnapshot?: Record<string, unknown> | null;
+}
+
 export interface MemoryGraphEdge {
   from_node_id: string;
   to_node_id: string;
@@ -133,6 +180,11 @@ export interface MemoryRecord {
   tags: string[];
   created_at: string;
   updated_at: string;
+  replica?: boolean;
+  node_id?: string;
+  reference_path?: string;
+  revision?: number;
+  evidence_status?: string;
 }
 
 export interface TaskRecord {

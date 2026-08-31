@@ -17,6 +17,7 @@ export async function jsonBody<T>(request: Request, maxBytes = 64_000): Promise<
 }
 
 export function safeLimit(value: unknown, fallback = 20, max = 100): number {
+  if (value === null || value === undefined || String(value).trim() === '') return fallback;
   const n = Number(value);
   if (!Number.isFinite(n)) return fallback;
   return Math.max(1, Math.min(max, Math.round(n)));
