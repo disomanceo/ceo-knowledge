@@ -19,7 +19,7 @@
     "typecheck:shared": "npm --workspace @ceo-knowledge/shared run typecheck",
     "typecheck:mobile": "npm --workspace @ceo-knowledge/mobile run typecheck",
     "typecheck:worker": "npm --workspace @ceo-knowledge/gateway run typecheck",
-    "test": "npm --workspace @ceo-knowledge/gateway run test && npm --workspace @ceo-knowledge/shared run test",
+    "test": "npm --workspace @ceo-knowledge/gateway run test && npm --workspace @ceo-knowledge/shared run test && npm --workspace @ceo-knowledge/mobile run test",
     "deploy:worker": "npm --workspace @ceo-knowledge/gateway run deploy",
     "deploy:mobile": "npm --workspace @ceo-knowledge/mobile run deploy",
     "verify": "npm run typecheck && npm test && npm run build"
