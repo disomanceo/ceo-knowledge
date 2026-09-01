@@ -7,6 +7,9 @@ describe('cloud chat fallback',()=>{
     expect(recallSearchQuery('ไปกับใคร?')).toBe('ไปกับ');
     expect(recallSearchQuery('ดูภาพยนต์วันไหน')).toBe('ดูภาพยนตร์');
     expect(recallSearchQuery('งานเกณียณวันไหน')).toBe('งานเกษียณ');
+    expect(recallSearchQuery('งานเกษียณจัดวันไหน')).toBe('งานเกษียณ');
+    expect(recallSearchQuery('งานเกษียณเริ่มกี่โมง')).toBe('งานเกษียณ');
+    expect(recallSearchQuery('งาน PA ต้องส่งวันไหน')).toBe('งาน PA');
     expect(recallSearchQuery('งาน PA กี่โมง')).toBe('งาน PA');
     expect(recallSubjectQuery('ที่ไหน')).toBe('');
     expect(isBareRecallFieldQuestion('ที่ไหน')).toBe(true);
