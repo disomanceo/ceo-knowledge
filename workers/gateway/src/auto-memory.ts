@@ -1,6 +1,6 @@
 import { sha256Hex } from './security';
 import { rest, rpc, type Env } from './supabase';
-import { isQuestionLike, scheduleTextSimilarity } from './chat-intelligence';
+import { isLiveExternalQuery, isQuestionLike, scheduleTextSimilarity } from './chat-intelligence';
 
 export type AutoMemoryKind = 'memory' | 'event' | 'task' | 'contact' | 'project_knowledge' | 'ignore';
 export type AutoMemoryRetention = 'permanent' | 'consolidation' | 'daily_log' | 'none';
@@ -255,6 +255,7 @@ function contactFields(text: string) {
 
 function heuristicKind(text: string, eventAt: string | null, explicit: boolean, endAt: string | null = null, now = new Date()): { kind: AutoMemoryKind; confidence: number } {
   const question = isQuestionLike(text);
+  if (!explicit && isLiveExternalQuery(text)) return { kind: 'ignore', confidence: 0.99 };
   const assignmentCue = /สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|ฝากให้|ให้[^\n]{0,120}(?:ทำ|จัด|รวบรวม|ถ่ายรูป|ส่ง|เตรียม|ตรวจ|แจ้ง)|รับผิดชอบ/i.test(text);
   const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|นิเทศ(?:การสอน)?|ประเมิน(?:\s*PA)?|ตรวจประเมิน|สังเกตการสอน|ตรวจเยี่ยมการสอน|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|appointment|meeting|schedule/i.test(text);
   const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|รับผิดชอบ|todo|task|deadline/i.test(text);

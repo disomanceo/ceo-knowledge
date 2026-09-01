@@ -117,6 +117,8 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
     expect(d.retention).toBe('none');
   });
 
+  it('never stores live external lookup requests as memory candidates',()=>{for(const message of ['เช็คสภาพอากาศ','ดูหุ้นให้สัก 3 ตัว','ดูหุ้นวันนี้หน่อยสัก 3 ตัว','ดูหุ้นวันนี้ที่เด่นๆ ให้สัก 3 ตัวครับ']){const d=classifyAutoMemoryHeuristic({message,source:'mobile'},now);expect(d.kind).toBe('ignore');expect(d.retention).toBe('none')}});
+
   it('never stores Thai calendar questions as memory candidates',()=>{
     const d=classifyAutoMemoryHeuristic({message:'วันที่ 18 มีอะไรไหม',source:'mobile'},now);
     expect(d.kind).toBe('ignore');

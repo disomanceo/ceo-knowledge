@@ -381,6 +381,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const contextualQuery=isBareRecallFieldQuestion(message)&&previousUser?previousUser.text:message;
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
       const intent = detectChatIntent(message);
+      if (intent.kind === 'live') {
+        const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ยังไม่มี Cloud AI Provider ที่รองรับ Web Search พร้อมใช้งานครับ';
+        const routed=await enqueueProviderChat(env,token,message,[],{strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
+        if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null,live:true});
+        return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:false,mode:'live-unavailable',provider:'knowledge',autoMemory:null,live:true});
+      }
       const question = isQuestionLike(message);
       let autoMemory: any = null;
       if (!question) {
@@ -402,12 +408,6 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if (rememberMatch?.[1]) {
         const memory = await saveMemory(env, token, { title: 'จาก Ceo Mobile Chat', content: rememberMatch[1], memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile-chat'] });
         return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้วครับ', memory, autoMemory });
-      }
-      if (intent.kind === 'live') {
-        const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ยังไม่มี Cloud AI Provider ที่รองรับ Web Search พร้อมใช้งานครับ';
-        const routed=await enqueueProviderChat(env,token,message,[],{strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
-        if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null,live:true});
-        return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:false,mode:'live-unavailable',provider:'knowledge',autoMemory:null,live:true});
       }
       if (intent.kind === 'date' || intent.kind === 'temporal') {
         const temporal = await temporalKnowledge(env, token, intent);

@@ -137,12 +137,16 @@ export function temporalTextMatchesIntent(input:string,intent:TimeIntent){
 
 export function isLiveExternalQuery(input:string):boolean{
   const t=clean(input).toLocaleLowerCase();
-  const marketOrNews=/(?:หุ้น|stock|set(?:50|100)?\b|ดัชนี|ตลาดหุ้น|ทอง|gold|ค่าเงิน|exchange rate|forex|คริปโต|crypto|bitcoin|btc|ethereum|eth|ราคาน้ำมัน|น้ำมัน|oil|ข่าว|news)/i.test(t);
+  const market=/(?:หุ้น|stock|set(?:50|100)?\b|ดัชนี|ตลาดหุ้น|ทอง|gold|ค่าเงิน|exchange rate|forex|คริปโต|crypto|bitcoin|btc|ethereum|eth|ราคาน้ำมัน|น้ำมัน|oil)/i.test(t);
+  const news=/(?:ข่าว|news)/i.test(t);
   const weather=/(?:สภาพอากาศ|พยากรณ์อากาศ|อากาศ|ฝน|อุณหภูมิ|พายุ|pm\s*2\.?5|aqi|weather|forecast|temperature|rain)/i.test(t);
-  const freshness=/(?:วันนี้|พรุ่งนี้|มะรืน|สัปดาห์(?:นี้|หน้า)|ตอนนี้|ล่าสุด|ปัจจุบัน|ขณะนี้|น่าสนใจ|ราคา(?:ตอนนี้|วันนี้)?|today|tomorrow|this week|next week|current|latest|right now|live)/i.test(t);
-  return (marketOrNews||weather)&&freshness;
+  const freshness=/(?:วันนี้|พรุ่งนี้|มะรืน|สัปดาห์(?:นี้|หน้า)|ตอนนี้|ล่าสุด|ปัจจุบัน|ขณะนี้|น่าสนใจ|เด่น|ราคา(?:ตอนนี้|วันนี้)?|today|tomorrow|this week|next week|current|latest|right now|live)/i.test(t);
+  const lookup=/(?:เช็ก|เช็ค|ช่วยดู|ดู(?:ให้|หน่อย)?|หา|ค้น|แนะนำ|คัด|เลือก|วิเคราะห์|บอก|สรุป|รายงาน|ให้สัก|ตัวไหน|ตัวไหนดี|เด่น|น่าสนใจ|ซื้อ|ขาย|ควร|แนวโน้ม|check|show|find|search|recommend|pick|analy[sz]e|tell|give\s+me)/i.test(t);
+  const educational=/(?:คืออะไร|หมายถึงอะไร|ความหมาย|ทำงานอย่างไร|ทำงานยังไง|ประวัติ|what\s+is|how\s+does)/i.test(t);
+  if(weather||news)return true;
+  if(market&&freshness)return true;
+  return market&&lookup&&!educational;
 }
-
 export function detectChatIntent(input:string,now=new Date()):ChatIntent{
   const t=clean(input);if(isLiveExternalQuery(t))return{kind:'live'};
   const date=parseDateIntent(t,now);if(date&&(isQuestionLike(t)||/(?:มีงาน|มีนัด|ตาราง|นัด|กิจกรรม|schedule|what.*on)/i.test(t)))return date;
