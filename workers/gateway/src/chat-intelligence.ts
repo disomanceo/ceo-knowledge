@@ -150,7 +150,7 @@ export function composeTemporalAnswer(intent:TimeIntent,input:{events:any[];task
   const lines:string[]=[`${intent.label}${topic?` เรื่อง “${topic}”`:''} มี ${total} รายการครับ`];
   for(const e of events.slice(0,12)){const dt=new Date(e.start_at),day=thaiDate(dt,{day:'numeric',month:'short'}),tm=dt.toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit'});lines.push(`• ${day} ${tm} ${e.title}${e.location?` · ${e.location}`:''}`)}
   for(const t of tasks.slice(0,12)){const due=t.due_at?thaiDate(new Date(t.due_at),{day:'numeric',month:'short'}):'';lines.push(`• งาน${due?` ${due}`:''}: ${t.title}${t.status==='completed'?' (เสร็จแล้ว)':''}`)}
-  for(const m of memories.slice(0,8))lines.push(`• ความจำ: ${m.title||m.content}`);
+  for(const m of memories.slice(0,8)){const text=clean(m.title||m.content).replace(/^(?:(?:Memory|Question)\s*:\s*)+/i,'');lines.push(`• ${text}`);}
   return lines.join('\n');
 }
 export function composeTaskAnswer(tasks:any[]){

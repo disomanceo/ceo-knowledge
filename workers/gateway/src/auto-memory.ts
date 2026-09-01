@@ -38,6 +38,8 @@ export interface AutoMemoryDecision {
   memoryType: 'fact' | 'preference' | 'rule' | 'decision' | 'context' | 'note';
   importance: number;
   eventAt: string | null;
+  endAt: string | null;
+  allDay: boolean;
   eventType: 'meeting' | 'appointment' | 'deadline' | 'reminder' | 'activity' | 'other';
   dueAt: string | null;
   fullName: string;
@@ -94,11 +96,16 @@ function projectUuid(value: unknown): string {
 }
 
 function explicitInstruction(text: string): boolean {
-  return /^\s*(?:จำ(?:ไว้|เอาไว้|ให้หน่อย|อันนี้)(?:ว่า)?|บันทึก(?:ไว้|ให้หน่อย|อันนี้)(?:ว่า)?|เก็บ(?:ไว้|ข้อมูลนี้)(?:ว่า)?|remember(?:\s+that)?|save\s+this)\s*[:：]?/i.test(text);
+  const value=clean(text,12_000);
+  if(!value)return false;
+  const directMemory=/(?:^|[\s,;:：])(?:ช่วย)?(?:จำ|บันทึก|จด|เก็บ)(?:ไว้|เอาไว้|ให้หน่อย|ข้อมูลนี้|เรื่องนี้)?(?:ว่า)?(?:\s|[:：]|$)|(?:^|\s)ให้(?:จำ|บันทึก|จด|เก็บ)(?:ไว้)?(?:ว่า)?(?:\s|[:：]|$)|(?:^|[\s,;])ฝาก(?:จำ|บันทึก|จด|เก็บ)?ไว้(?:ว่า)?(?:\s|[:：]|$)|\bremember(?:\s+that)?\b|\bsave\s+this\b/i.test(value);
+  const assignment=/(?:^|[\s,;])(?:สั่ง(?:ไว้)?ให้|มอบหมาย[^\n]{0,80}(?:ให้|รับผิดชอบ|ทำ|จัด|ส่ง|รวบรวม)|ฝาก(?:ไว้)?ให้|กำชับ[^\n]{0,80}(?:ให้|ต้อง|ห้าม|ทำ|ส่ง)|กำหนดให้|(?:ขอ)?ให้[^\n]{0,100}(?:รับผิดชอบ|รวบรวม|ถ่ายรูป|จัดทำ|ทำ|ส่ง|เตรียม|ตรวจ|แจ้ง|ดำเนินการ))/i.test(value);
+  const durableRule=/(?:^|[\s,;])(?:ต่อไป(?:นี้)?|จากนี้(?:ไป)?|ทุกครั้ง|คราวหน้า|ภายหลัง)(?:[^\n]{0,120})(?:ให้|ต้อง|ห้าม|ใช้|ทำ|จำ|บันทึก)/i.test(value);
+  return directMemory||assignment||durableRule;
 }
 
 function stripExplicit(text: string): string {
-  return text.replace(/^\s*(?:จำ(?:ไว้|เอาไว้|ให้หน่อย|อันนี้)(?:ว่า)?|บันทึก(?:ไว้|ให้หน่อย|อันนี้)(?:ว่า)?|เก็บ(?:ไว้|ข้อมูลนี้)(?:ว่า)?|remember(?:\s+that)?|save\s+this)\s*[:：]?\s*/i, '').trim() || text.trim();
+  return text.replace(/^\s*(?:(?:ช่วย)?จำ(?:ไว้|เอาไว้|ให้หน่อย|อันนี้)?(?:ว่า)?|ให้จำ(?:ไว้)?(?:ว่า)?|(?:ช่วย)?บันทึก(?:ไว้|ให้หน่อย|อันนี้)?(?:ว่า)?|ให้บันทึก(?:ไว้)?(?:ว่า)?|จด(?:ไว้|ให้หน่อย)?(?:ว่า)?|เก็บ(?:ไว้|ข้อมูลนี้)?(?:ว่า)?|remember(?:\s+that)?|save\s+this)\s*[:：]?\s*/i, '').trim() || text.trim();
 }
 
 export function containsAutoMemorySecret(text: string): boolean {
@@ -130,6 +137,28 @@ function bangkokIso(year: number, month: number, day: number, hour: number, minu
   const parts = bangkokDateParts(date);
   if (parts.year !== year || parts.month !== month || parts.day !== day) return null;
   return date.toISOString();
+}
+
+export function parseThaiDateRange(text: string, now = new Date()): { startAt: string; endAt: string; allDay: boolean } | null {
+  const value = clean(text, 12_000).replace(/\s+/g, ' ');
+  if (!value) return null;
+  const monthAlt = Object.keys(MONTHS).sort((a, b) => b.length - a.length).map(name => name.replace(/[.*+?^$\{\}()|[\]\\]/g, '\\$&')).join('|');
+  const sameMonth = value.match(new RegExp(`(?:วันที่\\s*)?(\\d{1,2})\\s*(?:-|–|—|ถึง)\\s*(\\d{1,2})\\s*(${monthAlt})(?:\\s*(?:พ\\.?ศ\\.?\\s*)?(\\d{2,4}))?`, 'i'));
+  if (!sameMonth) return null;
+  const startDay = Number(sameMonth[1]), endDay = Number(sameMonth[2]);
+  const rawMonth = String(sameMonth[3] || '');
+  const month = MONTHS[rawMonth] || MONTHS[rawMonth.replace(/\.$/, '')] || 0;
+  if (!month || !startDay || !endDay || endDay < startDay) return null;
+  const base = bangkokDateParts(now);
+  const year = sameMonth[4] ? normalizeYear(Number(sameMonth[4])) : base.year;
+  const startAt = bangkokIso(year, month, startDay, 0, 0);
+  if (!startAt) return null;
+  const endExclusive = new Date(Date.UTC(year, month - 1, endDay + 1, -7, 0, 0, 0));
+  if (Number.isNaN(endExclusive.getTime())) return null;
+  const endLocal = new Date(endExclusive.getTime() - 1);
+  const endParts = bangkokDateParts(endLocal);
+  if (endParts.year !== year || endParts.month !== month || endParts.day !== endDay) return null;
+  return { startAt, endAt: endLocal.toISOString(), allDay: true };
 }
 
 export function parseThaiDateTime(text: string, now = new Date()): string | null {
@@ -195,7 +224,7 @@ function eventType(text: string): AutoMemoryDecision['eventType'] {
   if (/เตือน|remind/i.test(text)) return 'reminder';
   if (/นัด|appointment/i.test(text)) return 'appointment';
   if (/ประชุม|meeting/i.test(text)) return 'meeting';
-  if (/กิจกรรม|งานเลี้ยง|ทดสอบ|อบรม|สัมมนา|activity/i.test(text)) return 'activity';
+  if (/กิจกรรม|งานเลี้ยง|ทดสอบ|อบรม|สัมมนา|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|activity/i.test(text)) return 'activity';
   return 'other';
 }
 
@@ -206,14 +235,18 @@ function contactFields(text: string) {
   return { fullName, organization, position };
 }
 
-function heuristicKind(text: string, eventAt: string | null, explicit: boolean): { kind: AutoMemoryKind; confidence: number } {
+function heuristicKind(text: string, eventAt: string | null, explicit: boolean, endAt: string | null = null): { kind: AutoMemoryKind; confidence: number } {
   const question = isQuestionLike(text);
-  const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|appointment|meeting|schedule/i.test(text);
-  const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|todo|task|deadline/i.test(text);
+  const assignmentCue = /สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|ฝากให้|ให้[^\n]{0,120}(?:ทำ|จัด|รวบรวม|ถ่ายรูป|ส่ง|เตรียม|ตรวจ|แจ้ง)|รับผิดชอบ/i.test(text);
+  const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|appointment|meeting|schedule/i.test(text);
+  const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|รับผิดชอบ|todo|task|deadline/i.test(text);
   const projectCue = /โปรเจกต์|โครงการ|ระบบ|workspace|repository|repo|architecture|roadmap|version|เวอร์ชัน|ตัดสินใจ|เลือกใช้|กำหนดให้/i.test(text);
   const preferenceCue = /ฉัน(?:ชอบ|ไม่ชอบ|ต้องการ)|ผม(?:ชอบ|ไม่ชอบ|ต้องการ)|ต่อไป(?:นี้)?|จากนี้(?:ไป)?|ทุกครั้ง|prefer/i.test(text);
   const contactCue = /(?:ชื่อ|เรียกว่า|ตำแหน่ง|ทำงานที่|องค์กร|หน่วยงาน|เบอร์โทร|อีเมล|email)\s*[:：]/i.test(text);
+  const deadlineCue = /ต้องส่ง|กำหนดส่ง|ครบกำหนด|deadline/i.test(text);
 
+  if (eventAt && endAt && deadlineCue) return { kind: 'task', confidence: 0.97 };
+  if (eventAt && endAt && (assignmentCue || eventCue)) return { kind: 'event', confidence: 0.98 };
   if (eventAt && taskCue) return { kind: 'task', confidence: 0.94 };
   if (eventAt && eventCue) return { kind: 'event', confidence: 0.96 };
   if (contactCue && explicit) return { kind: 'contact', confidence: 0.86 };
@@ -253,8 +286,11 @@ export function classifyAutoMemoryHeuristic(input: AutoMemoryInput, now = new Da
   const explicit = explicitInstruction(raw);
   const content = stripExplicit(raw);
   const blocked = containsAutoMemorySecret(content);
-  const eventAt = parseThaiDateTime(content, now);
-  const base = heuristicKind(content, eventAt, explicit);
+  const dateRange = parseThaiDateRange(content, now);
+  const eventAt = dateRange?.startAt || parseThaiDateTime(content, now);
+  const endAt = dateRange?.endAt || null;
+  const allDay = Boolean(dateRange?.allDay);
+  const base = heuristicKind(content, eventAt, explicit, endAt);
   const kind: AutoMemoryKind = blocked ? 'ignore' : base.kind;
   const parts = scoreParts(content, kind, base.confidence, explicit, eventAt);
   const rawScore = 0.30 * parts.userRelevance + 0.25 * parts.futureUtility + 0.20 * parts.eventSalience + 0.15 * parts.engagement + 0.10 * parts.confidence;
@@ -274,8 +310,10 @@ export function classifyAutoMemoryHeuristic(input: AutoMemoryInput, now = new Da
     memoryType: memoryType(content),
     importance: explicit || kind === 'event' || kind === 'task' ? 3 : 2,
     eventAt,
+    endAt,
+    allDay,
     eventType: eventType(content),
-    dueAt: kind === 'task' ? eventAt : null,
+    dueAt: kind === 'task' ? (endAt || eventAt) : null,
     fullName: contact.fullName,
     organization: contact.organization,
     position: contact.position,
@@ -488,7 +526,7 @@ async function persistEvent(env: Env, token: string, input: AutoMemoryInput, dec
       return { kind: 'event', id: existing[0].id, nodeId:mirror.nodeId, record: existing[0], replica:mirror.replica, duplicate: true };
     }
   }
-  const body: any = { title: decision.title, description: decision.content, event_type: decision.eventType, start_at: decision.eventAt, end_at: null, all_day: false, timezone: clean(input.timezone || 'Asia/Bangkok', 80), location: '', status: 'planned', priority: decision.importance >= 3 ? 'high' : 'normal', remind_at: null, tags: ['auto-memory', source], metadata: domainMetadata(input, decision, source, conversationKey, captureFingerprint) };
+  const body: any = { title: decision.title, description: decision.content, event_type: decision.eventType, start_at: decision.eventAt, end_at: decision.endAt, all_day: decision.allDay, timezone: clean(input.timezone || 'Asia/Bangkok', 80), location: '', status: 'planned', priority: decision.importance >= 3 ? 'high' : 'normal', remind_at: null, tags: ['auto-memory', source], metadata: { ...domainMetadata(input, decision, source, conversationKey, captureFingerprint), endAt: decision.endAt, allDay: decision.allDay } };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
   const rows = await rest<any[]>(env, token, 'events?select=*', { method: 'POST', body, prefer: 'return=representation' });
   const record=rows[0]; if(!record)return null;

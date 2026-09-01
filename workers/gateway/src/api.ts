@@ -384,9 +384,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!question) {
         try {
           autoMemory = await autoCapture(env, token, { message, conversationId: body.conversationId, projectId: body.projectId, sourceRef: body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
-          if (autoMemory?.decision?.explicit) {
-            if (autoMemory?.decision?.blocked) return ok({ intent: 'remember', answer: 'ไม่บันทึกข้อความนี้ เพราะตรวจพบข้อมูลลับหรือข้อมูลอ่อนไหว', memory: null, autoMemory });
-            if (autoMemory?.written) return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้วครับ', memory: autoMemory.written.record || null, autoMemory });
+          if (autoMemory?.decision?.blocked && autoMemory?.decision?.explicit) return ok({ intent: 'remember', answer: 'ไม่บันทึกข้อความนี้ เพราะตรวจพบข้อมูลลับหรือข้อมูลอ่อนไหว', memory: null, autoMemory });
+          const durableWrite=Boolean(autoMemory?.written)&&(Boolean(autoMemory?.decision?.explicit)||(['event','task'].includes(String(autoMemory?.decision?.kind))&&Number(autoMemory?.decision?.confidence||0)>=0.9));
+          if(durableWrite){
+            const kind=String(autoMemory?.decision?.kind||'memory');
+            const answer=kind==='event'?'รับทราบครับ บันทึกเป็นกิจกรรมไว้ใน Ceo Knowledge แล้วครับ':kind==='task'?'รับทราบครับ บันทึกเป็นงานไว้ใน Ceo Knowledge แล้วครับ':'จำไว้ใน Ceo Knowledge แล้วครับ';
+            return ok({ intent:'remember', answer, memory:autoMemory.written.record||null, autoMemory, mode:'knowledge', provider:'knowledge' });
           }
         } catch (error: any) {
           autoMemory = { ok: false, error: clean(error?.message || error || 'AUTO_MEMORY_FAILED', 300) };

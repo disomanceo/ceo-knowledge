@@ -1,5 +1,5 @@
 import { describe,expect,it } from 'vitest';
-import { composeDateAnswer,dateTextMatchesIntent,detectChatIntent,extractTemporalTopic,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent,parseTemporalIntent,temporalTextMatchesIntent } from '../src/chat-intelligence';
+import { composeDateAnswer,composeTemporalAnswer,dateTextMatchesIntent,detectChatIntent,extractTemporalTopic,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent,parseTemporalIntent,temporalTextMatchesIntent } from '../src/chat-intelligence';
 const now=new Date('2026-09-01T04:40:00.000Z');
 describe('chat intelligence',()=>{
  it('recognizes Thai question without question mark',()=>{expect(isQuestionLike('วันที่ 18 มีอะไรไหม')).toBe(true);expect(isQuestionLike('ดูภาพยนต์วันไหน')).toBe(true);expect(memoryLooksLikeQuestion({content:'Memory: วันที่ 18 มีอะไรไหม'})).toBe(true)});
@@ -15,6 +15,7 @@ describe('chat intelligence',()=>{
  it('extracts a temporal topic instead of searching the whole sentence',()=>{expect(extractTemporalTopic('เดือนนี้มีงานเกษียณอะไรบ้าง')).toBe('งานเกษียณ');expect(extractTemporalTopic('เดือนนี้มีงานอะไรบ้าง')).toBe('')});
  it('matches explicit memory dates against a broad temporal range',()=>{const i=parseTemporalIntent('เดือนนี้มีงานเกษียณอะไรบ้าง',now)!;expect(temporalTextMatchesIntent('วันที่ 18 กันยายน 2569 มีงานเลี้ยงเกษียณ',i)).toBe(true);expect(temporalTextMatchesIntent('วันที่ 18 ตุลาคม 2569 มีงานเลี้ยงเกษียณ',i)).toBe(false)});
  it('composes secretary-style date answer',()=>{const i=parseDateIntent('วันที่ 18 มีอะไรไหม',now)!;const a=composeDateAnswer(i,{events:[{title:'งานเกษียณ',start_at:'2026-09-18T10:00:00Z',location:''}],tasks:[],memories:[]});expect(a).toContain('งานเกษียณ');expect(a).not.toContain('พบข้อมูลที่เกี่ยวข้อง')});
+ it('omits retrieval labels from memory rows in natural date answers',()=>{const i=parseDateIntent('วันที่ 17 มีอะไรไหม',now)!;const a=composeTemporalAnswer(i,{events:[],tasks:[],memories:[{title:'Memory: ส่งเล่ม PA สำนักงานเขต'}]});expect(a).toContain('ส่งเล่ม PA สำนักงานเขต');expect(a).not.toContain('ความจำ:');expect(a).not.toContain('Memory:')});
 });
 
 import { afterEach, vi } from 'vitest';

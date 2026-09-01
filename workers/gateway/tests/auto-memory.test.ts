@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { autoCapture, classifyAutoMemoryHeuristic, containsAutoMemorySecret, parseThaiDateTime } from '../src/auto-memory';
+import { autoCapture, classifyAutoMemoryHeuristic, containsAutoMemorySecret, parseThaiDateRange, parseThaiDateTime } from '../src/auto-memory';
 import { handleApi } from '../src/api';
 
 const env:any={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public',APP_ENV:'test'};
@@ -28,6 +28,40 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
   it('parses Buddhist Era Thai date/time in Bangkok correctly',()=>{
     expect(parseThaiDateTime('18 ก.ย. 2569 เวลา 17.00 น. มีงานเลี้ยงเกษียณ',now)).toBe('2026-09-18T10:00:00.000Z');
     expect(parseThaiDateTime('พรุ่งนี้ 09:30 ประชุม',now)).toBe('2026-09-02T02:30:00.000Z');
+  });
+
+  it('parses Thai same-month date ranges as all-day spans',()=>{
+    const range=parseThaiDateRange('ให้ครูจัดการเรียนการสอนด้วย AI วันที่ 2-3 ก.ย. ให้ทำ 2 วัน',now);
+    expect(range?.startAt).toBe('2026-09-01T17:00:00.000Z');
+    expect(range?.endAt).toBe('2026-09-03T16:59:59.999Z');
+    expect(range?.allDay).toBe(true);
+  });
+
+  it('treats durable instructions as save intent without depending on one exact keyword',()=>{
+    const samples=[
+      'สั่งให้ครูดาวรวบรวมรูปวันที่ 2-3 ก.ย.',
+      'มอบหมายครูดาวให้รับผิดชอบรวบรวมรูปวันที่ 2-3 ก.ย.',
+      'ฝากไว้ว่า ต่อไปให้ครูดาวรวบรวมรูป',
+      'คราวหน้าห้ามลืมถ่ายรูปกิจกรรม',
+      'ให้ครูช่วยกันทำสื่อการสอนวันที่ 2-3 ก.ย. และให้ครูดาวรวบรวมรูป',
+    ];
+    for(const message of samples){
+      const d=classifyAutoMemoryHeuristic({message,source:'mobile'},now);
+      expect(d.explicit||['event','task','memory'].includes(d.kind)).toBe(true);
+      expect(d.retention).not.toBe('none');
+    }
+  });
+
+  it('classifies a multi-day teaching assignment as a permanent structured event',()=>{
+    const message='สั่งให้ครูช่วยกันทำสื่อการสอน และจัดการเรียนการสอนด้วย AI วันที่ 2-3 ก.ย. ให้ทำ 2 วัน และให้ครูดาวเป็นคนรวบรวม ถ่ายรูป';
+    const d=classifyAutoMemoryHeuristic({message,source:'mobile'},now);
+    expect(d.explicit).toBe(true);
+    expect(d.kind).toBe('event');
+    expect(d.eventAt).toBe('2026-09-01T17:00:00.000Z');
+    expect(d.endAt).toBe('2026-09-03T16:59:59.999Z');
+    expect(d.allDay).toBe(true);
+    expect(d.retention).toBe('permanent');
+    expect(d.needsConfirmation).toBe(false);
   });
 
   it('classifies a dated retirement party as a permanent event',()=>{
@@ -100,6 +134,33 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
     const archiveCall=calls.find(x=>x.url.includes('/conversation_summaries?')&&x.method==='POST');
     expect(archiveCall.body.conversation_key).toBe('chatgpt:retirement-2026');
     expect(archiveCall.body.metadata.classification).toBe('event');
+  });
+
+  it('writes a multi-day assignment from chat and acknowledges the durable capture',async()=>{
+    const calls:any[]=[];
+    vi.stubGlobal('fetch',async(input:any,init:any={})=>{
+      const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();
+      let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}
+      calls.push({url,method,body});
+      if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-row',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
+      if(url.endsWith('/rest/v1/events?select=*')&&method==='POST')return json([{id:'evt-ai-teaching',...body}]);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const message='สั่งให้ครูช่วยกันทำสื่อการสอน และจัดการเรียนการสอนด้วย AI วันที่ 2-3 ก.ย. ให้ทำ 2 วัน และให้ครูดาวเป็นคนรวบรวม ถ่ายรูป';
+    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message,conversationId:'mobile:ai-teaching'})}),env);
+    expect(response.status).toBe(200);
+    const payload:any=await response.json();
+    expect(payload.data.intent).toBe('remember');
+    expect(payload.data.answer).toContain('บันทึกเป็นกิจกรรม');
+    expect(payload.data.autoMemory.decision.kind).toBe('event');
+    expect(payload.data.autoMemory.decision.explicit).toBe(true);
+    const eventCall=calls.find(x=>x.url.endsWith('/rest/v1/events?select=*'));
+    expect(eventCall.body.start_at).toBe('2026-09-01T17:00:00.000Z');
+    expect(eventCall.body.end_at).toBe('2026-09-03T16:59:59.999Z');
+    expect(eventCall.body.all_day).toBe(true);
   });
 
   it('writes explicit durable project knowledge with pinned provenance',async()=>{
