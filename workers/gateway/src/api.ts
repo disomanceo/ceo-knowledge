@@ -3,7 +3,8 @@ import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprov
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectQuery } from './chat';
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
-import { enqueueOllamaChat, enqueueProviderChat } from './runtime-chat';
+import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
+import { askCloudAi, cloudAiConfig } from './cloud-ai';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
@@ -295,11 +296,24 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: env.LLM_API_KEY ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
     if (url.pathname === '/api/me' && request.method === 'GET') return ok({ id: user.id, email: user.email || '', metadata: user.user_metadata || {} });
+
+    if (url.pathname === '/api/ai/status' && request.method === 'GET') {
+      const devices=await rest<any[]>(env,token,'devices?select=id,device_name,runtime_id,status,trusted,last_seen_at,capabilities&trusted=eq.true&limit=30').catch(()=>[]);
+      const runtimeDevice=selectProviderChatDevice(devices),ollamaDevice=selectOllamaDevice(devices),cloud=cloudAiConfig(env);
+      const active=runtimeDevice
+        ? {source:'desktop',provider:'auto',model:'Active model on Ceo MCP Agent',device:{id:runtimeDevice.id,name:clean(runtimeDevice.device_name,200)}}
+        : ollamaDevice
+          ? {source:'desktop',provider:'ollama',model:clean(env.OLLAMA_CHAT_MODEL||'qwen2.5vl:3b',120),device:{id:ollamaDevice.id,name:clean(ollamaDevice.device_name,200)}}
+          : cloud.configured
+            ? {source:'cloud',provider:cloud.primary,model:cloud.primary==='gemini'?cloud.gemini.model:cloud.legacy.model,device:null}
+            : {source:'knowledge',provider:'knowledge',model:'',device:null};
+      return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud});
+    }
 
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
@@ -462,10 +476,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
       const intent = detectChatIntent(message);
       if (intent.kind === 'live') {
-        const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ยังไม่มี Cloud AI Provider ที่รองรับ Web Search พร้อมใช้งานครับ';
+        const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ตอนนี้ทั้ง Ceo Runtime และ Cloud AI Search ยังไม่พร้อมใช้งานครับ';
         const routed=await enqueueProviderChat(env,token,message,[],{strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
         if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null,live:true});
-        return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:false,mode:'live-unavailable',provider:'knowledge',autoMemory:null,live:true});
+        const cloud=await askCloudAi(env,message,[],{live:true});
+        if(cloud.ok)return ok({intent:'live',answer:cloud.answer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,autoMemory:null,live:true});
+        return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',cloudReason:cloud.reason,autoMemory:null,live:true});
       }
       const question = isQuestionLike(message);
       let autoMemory: any = null;
@@ -501,6 +517,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
           const analysisPrompt=`คำถามเดิมของผู้ใช้: ${message}\nวิเคราะห์ตารางจาก Ceo Knowledge context ที่ให้มาเท่านั้น ตอบเป็นภาษาไทยแบบเลขานุการ: รวมรายการที่หมายถึงเหตุการณ์เดียวกัน, แยกนัด/กำหนดการหลักออกจากกิจกรรมต่อเนื่อง, ห้ามแต่งวัน เวลา หรือสถานที่, และถ้า allDay=true ห้ามตีความ 00:00 ว่าเป็นเวลานัด`;
           const routed=await enqueueProviderChat(env,token,analysisPrompt,groundedRows,{task:'reasoning',strategy:'balanced'}).catch(()=>null);
           if(routed?.job?.id)return ok({intent:intent.kind,answer:'กำลังวิเคราะห์ตารางให้ครับ…',fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null});
+          const cloud=await askCloudAi(env,analysisPrompt,groundedRows);
+          if(cloud.ok)return ok({intent:intent.kind,answer:cloud.answer,fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:false,sources:cloud.sources,autoMemory:null});
         }
         return ok({ intent:intent.kind, answer:fallbackAnswer, temporal, range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope}, autoMemory:null, mode:'knowledge', provider:'knowledge' });
       }
@@ -524,9 +542,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if (routed?.job?.id) return ok({ intent: 'runtime-provider', answer: 'กำลังส่งคำถามให้ Ceo Auto Router…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'runtime-provider-pending', provider: 'auto', jobId: routed.job.id, device: routed.device, autoMemory });
       const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);
       if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device, autoMemory });
-      const llm = await maybeLlm(env, message, search.results);
-      const mode = llm ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
-      return ok({ intent: intent.kind, answer: llm || fallbackAnswer, search, ai: Boolean(llm), aiConfigured: Boolean(env.LLM_API_KEY), mode, provider: llm ? 'cloud-ai' : 'knowledge', autoMemory });
+      const cloud = await askCloudAi(env, message, search.results);
+      const mode = cloud.ok ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
+      return ok({ intent: intent.kind, answer: cloud.ok ? cloud.answer : fallbackAnswer, search, ai: cloud.ok, aiConfigured: cloudAiConfig(env).configured, mode, provider: cloud.ok ? cloud.provider : 'knowledge', model: cloud.ok ? cloud.model : '', grounded: cloud.grounded, sources: cloud.sources, cloudReason: cloud.ok ? undefined : cloud.reason, autoMemory });
     }
     if (url.pathname === '/api/drive/config' && request.method === 'GET') return ok(await ceoDriveConfig(env));
     if (url.pathname === '/api/drive/status' && request.method === 'GET') return ok(await ceoDriveStatus(driveProviderToken(request)));

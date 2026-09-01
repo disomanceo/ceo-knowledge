@@ -66,3 +66,4 @@ body { min-width:320px; }
 .memory-filter-row{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none}.memory-filter-row::-webkit-scrollbar{display:none}.memory-day-summary{margin:10px 0;padding:9px 11px;border:1px solid #29303e;border-radius:11px;background:#0e1219;color:#8f9aae;font-size:11px}.memory-row{padding:12px;border:1px solid #252c39;border-radius:12px;background:#0d1016}.memory-row+.memory-row{margin-top:8px}
 
 .memory-stat{border:1px solid #252b38;border-radius:12px;padding:.55rem .25rem;display:flex;flex-direction:column;gap:.12rem}.memory-stat b{font-size:.95rem}.memory-stat span{font-size:.62rem;color:#8f98aa}
+.ai-route-box{border:1px solid #29303e;border-radius:13px;background:#0d1017;padding:11px 12px;min-width:0}

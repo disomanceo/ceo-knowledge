@@ -2,6 +2,8 @@ export interface Env {
   APP_ENV?: string;
   SUPABASE_URL: string;
   SUPABASE_ANON_KEY: string;
+  GEMINI_API_KEY?: string;
+  GEMINI_MODEL?: string;
   LLM_API_KEY?: string;
   LLM_BASE_URL?: string;
   LLM_MODEL?: string;

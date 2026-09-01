@@ -93,7 +93,8 @@ function ChatPage() {
         if(job?.status==='completed'&&result?.available!==false&&answer){const actualModel=String(result?.model||model);setProvider('AUTO · OLLAMA '+actualModel);setItems(v=>[...v,{role:'ceo',text:answer,meta:'OLLAMA · '+actualModel,at:Date.now()}]);}
         else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'OLLAMA_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE FALLBACK');setItems(v=>[...v,{role:'ceo',text:fallback,meta:'KNOWLEDGE FALLBACK · '+reason,at:Date.now()}]);}
       } else {
-        const mode=String(r?.mode||r?.intent||'knowledge'),label=mode==='cloud-ai'?'CLOUD · AI':mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';setProvider(label);setItems(v=>[...v,{role:'ceo',text:r.answer||'เรียบร้อยครับ',meta:label.replace('AUTO · ',''),at:Date.now()}]);
+        const mode=String(r?.mode||r?.intent||'knowledge'),cloudProvider=String(r?.provider||'AI').toUpperCase(),cloudModel=String(r?.model||'').trim(),grounded=r?.grounded===true;
+        const cloudLabel=['CLOUD',cloudProvider,cloudModel,grounded?'SEARCH':''].filter(Boolean).join(' · '),label=mode==='cloud-ai'?cloudLabel:mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';setProvider(label);setItems(v=>[...v,{role:'ceo',text:r.answer||'เรียบร้อยครับ',meta:label.replace('AUTO · ',''),at:Date.now()}]);
       }
     } catch(e:any){setProvider('AUTO · ERROR');setItems(v=>[...v,{role:'ceo',text:'เกิดข้อผิดพลาด: '+String(e?.message||e),meta:'ERROR',at:Date.now()}]);}
     finally{setBusy(false);setThinking('Ceo กำลังค้นความจำ…')}

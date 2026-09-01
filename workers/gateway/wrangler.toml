@@ -7,9 +7,10 @@ workers_dev = true
 APP_ENV = "production"
 SUPABASE_URL = "https://pcvdtcntyzndhfxfawbo.supabase.co"
 SUPABASE_ANON_KEY = "sb_publishable_YHxm-J_CHXUpQJGCL057GQ_ny6UKIgX"
+GEMINI_MODEL = "gemini-2.5-flash-lite"
 
-# Required secret:
-#   npx wrangler secret put SUPABASE_ANON_KEY
-# Optional AI secrets for richer chat:
+# Cloud AI fallback (keep API keys out of Git/frontend):
+#   npx wrangler secret put GEMINI_API_KEY
+# Optional secondary OpenAI-compatible fallback:
 #   npx wrangler secret put LLM_API_KEY
 # Optional vars (Dashboard/Wrangler): LLM_BASE_URL, LLM_MODEL
