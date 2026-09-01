@@ -1,4 +1,5 @@
 const clean=(value:unknown,max=6000)=>String(value??'').replace(/\u0000/g,'').trim().slice(0,max);
+const normalizeThaiRecall=(value:string)=>value.replace(/เกณียณ|เกษียน|เกษีณ/g,'เกษียณ').replace(/ภาพยนต์/g,'ภาพยนตร์');
 
 export type RecallAnswerField='date'|'time'|'location'|'person'|'status'|'general';
 
@@ -17,7 +18,7 @@ export function recallAnswerField(message:string):RecallAnswerField {
 }
 
 export function recallSubjectQuery(message:string):string {
-  const text=clean(message,4000).replace(/[?？]/g,' ');
+  const text=normalizeThaiRecall(clean(message,4000)).replace(/[?？]/g,' ');
   return text
     .replace(/\s*(?:อะไรบ้าง|อะไร|ใครบ้าง|ใคร|ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|วันไหน|วันอะไร|เมื่อไร|เมื่อไหร่|กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร|สถานะ(?:อะไร)?|เสร็จหรือยัง|เรียบร้อยหรือยัง|ทำถึงไหน|เป็นยังไงบ้าง)\s*(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i,'')
     .replace(/^(?:แล้ว|แล้วก็|แล้วมัน|แล้วอันนั้น|อันนั้น|เรื่องนั้น|มัน)\s*/i,'')
@@ -61,7 +62,10 @@ export function composeRecallAnswer(message:string,results:any[]):{answer:string
     if(event)return{answer:`ที่ ${clean(event.location,500)}ครับ`,confident:true,field,sourceId:clean(event.id,200)};
   }
   if(field==='date'){
-    const event=firstEvent(rows,row=>Boolean(row?.start_at));
+    const datedEvents=rows.filter(row=>row?.kind==='events'&&row?.start_at).slice(0,4);
+    const uniqueEvents=datedEvents.filter((row,index,list)=>list.findIndex(other=>thaiDate(other.start_at)===thaiDate(row.start_at)&&clean(other.title,180)===clean(row.title,180))===index);
+    if(uniqueEvents.length>1){const items=uniqueEvents.map((row:any)=>`• ${clean(row.title,180)} — ${thaiDate(row.start_at)}`).join('\n');return{answer:`มี ${uniqueEvents.length} งานครับ\n${items}`,confident:true,field,sourceId:clean(uniqueEvents[0]?.id,200)};}
+    const event=uniqueEvents[0]||firstEvent(rows,row=>Boolean(row?.start_at));
     if(event){const when=thaiDate(event.start_at);if(when)return{answer:`วันที่ ${when}ครับ`,confident:true,field,sourceId:clean(event.id,200)};}
     const task=firstTask(rows,row=>Boolean(row?.due_at));
     if(task){const when=thaiDate(task.due_at);if(when)return{answer:`กำหนดวันที่ ${when}ครับ`,confident:true,field,sourceId:clean(task.id,200)};}

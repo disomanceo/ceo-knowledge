@@ -5,7 +5,8 @@ describe('cloud chat fallback',()=>{
   it('strips Thai recall question tails for Knowledge search',()=>{
     expect(recallSearchQuery('เมื่อวานกินข้าวกับอะไร')).toBe('เมื่อวานกินข้าวกับ');
     expect(recallSearchQuery('ไปกับใคร?')).toBe('ไปกับ');
-    expect(recallSearchQuery('ดูภาพยนต์วันไหน')).toBe('ดูภาพยนต์');
+    expect(recallSearchQuery('ดูภาพยนต์วันไหน')).toBe('ดูภาพยนตร์');
+    expect(recallSearchQuery('งานเกณียณวันไหน')).toBe('งานเกษียณ');
     expect(recallSearchQuery('งาน PA กี่โมง')).toBe('งาน PA');
     expect(recallSubjectQuery('ที่ไหน')).toBe('');
     expect(isBareRecallFieldQuestion('ที่ไหน')).toBe(true);
@@ -43,5 +44,13 @@ describe('cloud chat fallback',()=>{
     expect(composeRecallAnswer('ดูภาพยนต์วันไหน',[event]).answer).toBe('วันที่ 7 กันยายน 2569ครับ');
     expect(composeRecallAnswer('ดูภาพยนต์ที่ไหน',[event]).answer).toBe('ที่ Big C สุพรรณบุรีครับ');
     expect(composeRecallAnswer('ดูภาพยนต์กี่โมง',[event]).answer).toBe('กิจกรรมนี้ยังไม่ได้ระบุเวลาไว้ครับ');
+  });
+  it('returns multiple matching event dates for one subject',()=>{
+    const events=[
+      {id:'r1',kind:'events',title:'งานเลี้ยงเกษียณ ผอ. เผือก',start_at:'2026-09-18T10:00:00.000Z'},
+      {id:'r2',kind:'events',title:'งานเกษียณ ผอ. เผือก ที่โรงเรียน',start_at:'2026-09-25T02:00:00.000Z'},
+    ];
+    const answer=composeRecallAnswer('งานเกณียณวันไหน',events).answer;
+    expect(answer).toContain('มี 2 งาน');expect(answer).toContain('18 กันยายน 2569');expect(answer).toContain('25 กันยายน 2569');
   });
 });
