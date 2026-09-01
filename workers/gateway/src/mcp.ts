@@ -78,7 +78,7 @@ export const CEO_CLOUD_MCP_TOOLS = [
   },
   {
     name: 'ceo_remember',
-    description: 'Explicitly save a durable user memory to Ceo Knowledge Cloud. Use only when the user clearly asks Ceo to remember/save a fact or note. Never use this for passwords, API keys, tokens, or other secrets.',
+    description: 'Explicitly save durable user information to Ceo Knowledge Cloud through the same Auto Memory classifier used by Mobile. Facts become memories, appointments become events, and obligations/reminders such as ต้องส่ง or อย่าลืม become tasks. Never use this for passwords, API keys, tokens, or other secrets.',
     inputSchema: {
       type: 'object',
       properties: {

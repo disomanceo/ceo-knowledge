@@ -272,8 +272,16 @@ async function executeCloudMcpTool(env: Env, context: McpToolCallContext) {
   if(context.name==='ceo_remember'){
     const content=clean(a.content,20000);if(!content)throw Object.assign(new Error('MEMORY_CONTENT_REQUIRED'),{status:400});
     if(containsAutoMemorySecret(content))throw Object.assign(new Error('MEMORY_SECRET_BLOCKED'),{status:400});
-    const memory=await saveMemory(env,context.token,{title:clean(a.title,300)||'จาก ChatGPT Cloud MCP',content,memoryType:'note',importance:Math.max(0,Math.min(3,Math.round(Number(a.importance??2)))),scope:'global',tags:['chatgpt','mcp','cloud'],origin:'chatgpt-mcp'});
-    return{answer:'จำไว้ใน Ceo Knowledge Cloud แล้วครับ',memory};
+    const autoMemory=await autoCapture(env,context.token,{message:'จำไว้ว่า '+content,source:'api',sourceRef:'cloud-mcp:ceo_remember',timezone:'Asia/Bangkok',archive:false});
+    if(!autoMemory?.written){
+      if(autoMemory?.decision?.needsConfirmation)throw Object.assign(new Error('MEMORY_NEEDS_CONFIRMATION'),{status:400});
+      throw Object.assign(new Error('MEMORY_WRITE_SKIPPED'),{status:500});
+    }
+    const kind=String(autoMemory.written.kind||autoMemory.decision?.kind||'memory');
+    const answer=kind==='task'?'บันทึกเป็น Task ใน Ceo Knowledge Cloud แล้วครับ':kind==='event'?'บันทึกเป็นกิจกรรมใน Ceo Knowledge Cloud แล้วครับ':'จำไว้ใน Ceo Knowledge Cloud แล้วครับ';
+    const record=autoMemory.written.record||null;
+    const memory=kind==='memory'&&record?{...record,node_id:autoMemory.written.nodeId,replica:autoMemory.written.replica}:record;
+    return{answer,kind,memory,record,autoMemory};
   }
   throw Object.assign(new Error(`MCP_TOOL_NOT_IMPLEMENTED:${context.name}`),{status:404});
 }

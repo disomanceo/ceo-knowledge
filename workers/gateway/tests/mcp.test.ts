@@ -82,4 +82,21 @@ describe('Ceo Knowledge Cloud MCP',()=>{
     expect(body.result.structuredContent.answer).toContain('Ceo Knowledge Cloud');
     expect(body.result.structuredContent.memory.replica.outcome).toBe('accepted');
   });
+  it('routes explicit cloud reminders into Tasks through Auto Memory',async()=>{
+    const calls:any[]=[];
+    vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=String(input),method=String(init.method||'GET').toUpperCase();let requestBody:any=null;try{requestBody=init.body?JSON.parse(String(init.body)):null}catch{};calls.push({url,method,body:requestBody});
+      if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+      if(url.includes('/rest/v1/tasks?')&&method==='POST')return json([{id:'22222222-2222-2222-2222-222222222222',title:requestBody.title,description:requestBody.description,status:'open',priority:requestBody.priority,due_at:requestBody.due_at,waiting_for:'',tags:requestBody.tags,metadata:requestBody.metadata,created_at:'2026-09-01T13:00:00Z',updated_at:'2026-09-01T13:00:00Z'}],201);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:requestBody.p_snapshot.nodeId,revision:1,snapshot:requestBody.p_snapshot});
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const response=await handleApi(new Request('https://ceo.test/mcp',{method:'POST',headers:auth,body:rpc('tools/call',{name:'ceo_remember',arguments:{content:'วันที่ 20 กันยายน 2569 อย่าลืมยกเลิก ChatGPT Plus'}})}),env);
+    const body:any=await response.json();
+    expect(body.result.isError).toBe(false);
+    expect(body.result.structuredContent.kind).toBe('task');
+    expect(body.result.structuredContent.answer).toContain('Task');
+    expect(body.result.structuredContent.memory.status).toBe('open');
+    expect(calls.some(call=>call.url.includes('/rest/v1/tasks?')&&call.method==='POST')).toBe(true);
+    expect(calls.some(call=>call.url.includes('/rest/v1/memories?')&&call.method==='POST')).toBe(false);
+  });
 });
