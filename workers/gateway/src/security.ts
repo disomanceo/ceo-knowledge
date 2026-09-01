@@ -42,3 +42,22 @@ export async function sha256Hex(value: string): Promise<string> {
 export function newIdempotencyKey(): string {
   return crypto.randomUUID();
 }
+
+export type DeviceAccessAction = 'disable' | 'enable' | 'revoke';
+export type ApprovalDecision = 'approved' | 'denied';
+
+export function parseDeviceAccessAction(value: unknown): DeviceAccessAction {
+  const action = String(value ?? '').trim().toLowerCase();
+  if (action !== 'disable' && action !== 'enable' && action !== 'revoke') throw Object.assign(new Error('DEVICE_ACTION_INVALID'), { status: 400 });
+  return action;
+}
+
+export function parseApprovalDecision(value: unknown): ApprovalDecision {
+  const decision = String(value ?? '').trim().toLowerCase();
+  if (decision !== 'approved' && decision !== 'denied') throw Object.assign(new Error('APPROVAL_DECISION_INVALID'), { status: 400 });
+  return decision;
+}
+
+export function remoteApprovalState(tool: string): 'not_required' | 'pending' {
+  return ['document.read','filesystem.read'].includes(String(tool || '').trim()) ? 'pending' : 'not_required';
+}

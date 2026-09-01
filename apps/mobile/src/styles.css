@@ -44,6 +44,13 @@ body { min-width:320px; }
 .console-action { width:100%; min-height:92px; transition:border-color .15s ease,transform .15s ease; }
 .console-action:active { transform:scale(.985); border-color:#f4c95d; }
 
+.danger-btn { border-color:rgba(248,113,113,.38); color:#fca5a5; }
+.danger-btn:active { border-color:#f87171; }
+.console-count { position:absolute; right:10px; top:10px; min-width:20px; height:20px; padding:0 6px; display:grid; place-items:center; border-radius:999px; background:#f4c95d; color:#111318; font-size:11px; font-weight:800; }
+.approval-args { max-height:180px; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; border:1px solid #282f3e; border-radius:12px; background:#0d1017; padding:10px; font:11px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; color:#cdd4e2; }
+.connection-card.ready { border-color:rgba(67,209,123,.35); }
+.connection-card.pair-required { border-color:rgba(244,201,93,.35); }
+
 .oauth-card { box-shadow:0 24px 80px rgba(0,0,0,.34); }
 .oauth-security-note { display:flex; align-items:flex-start; gap:10px; border:1px solid rgba(67,209,123,.28); background:rgba(67,209,123,.07); color:#bdeccc; border-radius:14px; padding:12px 13px; line-height:1.5; }
 .oauth-security-note svg { flex:0 0 auto; margin-top:2px; color:#43d17b; }

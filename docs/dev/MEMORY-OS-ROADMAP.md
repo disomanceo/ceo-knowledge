@@ -1,6 +1,6 @@
 ﻿# Ceo Knowledge Memory OS Roadmap
 
-> Status: **M1-M2 COMPLETE / M3 PLANNED**
+> Status: **M1-M4 COMPLETE / MEMORY OS V2 PRODUCTION-CERTIFIED**
 >
 > Reference roadmap for evolving Ceo Knowledge into a **Local-First Personal Memory OS** without replacing the existing Ceo Core.
 
@@ -401,24 +401,51 @@ Before **Ceo Memory V2 Local-First Alpha**:
 
 # Current Implementation Status
 
-M1-M2 were completed locally on 2026-08-31.
+M1-M4 were completed and production-certified on 2026-09-01.
 
-Certification evidence:
-- Local/Knowledge targeted tests: 26/26 PASS.
-- Desktop full suite: 364/364 PASS.
-- Desktop TypeScript: PASS.
-- MCP exposure check: PASS, 308 registered tools.
-- 10,000-node benchmark: indexed recall 18.69 ms; direct stable-ID recall 14.26 ms; candidate count 1; Markdown reads 0; global semantic search false.
-- ceo-knowledge verify: Worker 23/23, Shared 5/5, Shared/Mobile/Worker typechecks and builds PASS.
-- No Supabase migration/deploy was required for M1-M2.
+## M1-M2 — Local Brain + Intelligent Routing ✅
+- Markdown durable memory + SQLite indexes + Graph + Local Recall.
+- Stable Node IDs, explicit-memory pinning, project/topic/entity/time routing.
+- Mode Router and compact Conversation Archive.
+- 10,000-node benchmark remains below target with no Markdown scan.
 
-Phase 0 deliverables exist:
-1. `MEMORY-V2-COMPATIBILITY-REPORT.md`
-2. `MEMORY-V2-ARCHITECTURE.md`
-3. `MEMORY-V2-DATA-MAPPING.md`
-4. `MEMORY-V2-IMPLEMENTATION-PLAN.md`
+## M3 — Local ↔ Cloud ✅
+- Durable Local Outbox with deterministic client_event_id and retry/backoff.
+- Stable-ID Cloud replica and Cloud → Local pull.
+- Optimistic revision conflicts with no silent overwrite.
+- Provenance SOURCE / DERIVED_FROM sync.
+- Supabase migration 20260831210000_ceo_knowledge_memory_os_m3.sql deployed to Maple.
+- Offline/restart/conflict/provenance bridge tests pass.
 
-The next implementation milestone is **M3 — Local ↔ Cloud**, beginning with additive stable-node replica mapping and an idempotent local Outbox. Cloud UUID primary keys remain unchanged.
+## M4 — Knowledge Intelligence ✅
+- Claim nodes with SUPPORTED_BY / CONTRADICTS evidence.
+- Evidence status: unverified / single_source / confirmed / conflicting / refuted.
+- Project-scoped Research Workspace and Current Summary.
+- Consolidation summary preserves derived_from references.
+- Bangkok-aware relative-date normalization including numeric Buddhist year conversion.
+- Golden Dataset V1: 40/40 deterministic cases pass.
+- Golden metrics: Recall@5 1.00, MRR 1.00, Routing 1.00, Date 1.00, Groundedness 1.00, Abstention 1.00, Dedup 1.00.
+- 10,000-node benchmark: indexed recall 16.10 ms, direct stable-ID 11.10 ms, candidate count 1, Markdown reads 0, global semantic fallback false.
+- Corrupted SQLite is quarantined and automatically rebuilt from durable Markdown.
+- Managed backup/restore uses .ceo/backups/<backup-id> + SHA-256 manifest and blocks arbitrary-path restore.
+- 100-write offline soak preserves all Local Memory and drains Outbox after Cloud recovery.
+- Mobile exposes Claims, Evidence and Research Workspace without widening remote shell/tool permissions.
+
+## Final Certification Evidence
+- Ceo-MCP-Agent full suite: **384/384 PASS**.
+- ceo-knowledge Worker: **30/30 PASS**.
+- ceo-knowledge Shared: **7/7 PASS**.
+- Shared/Mobile/Worker TypeScript: PASS.
+- Mobile production build: PASS.
+- Worker production dry-run: PASS.
+- M4 migration dry-run showed only 20260901011500_ceo_knowledge_memory_os_m4.sql before deploy; post-deploy remote database reports up to date.
+- Supabase schema reports ceo_knowledge version **2.2.0**, configured/available/authenticated.
+- Production Worker health: ceo-knowledge-gateway / environment production.
+- Worker production version ID: **74239f0b-f894-4e44-8f80-50fc6e40a1b2**.
+- Canonical Pages: https://ceo-knowledge.pages.dev returned HTTP 200.
+- Latest Pages deployment from this certification: https://c15c123f.ceo-knowledge.pages.dev.
+
+Detailed certification: docs/dev/MEMORY-M4-CERTIFICATION.md
 
 # Deferred Until Core Is Stable
 

@@ -1,5 +1,5 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
-import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, safeLimit, searchOr, sha256Hex } from './security';
+import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback } from './chat';
 import { enqueueOllamaChat } from './runtime-chat';
@@ -152,6 +152,23 @@ function memoryReplicaAsRecord(row: any): MemoryRecord & { replica: true; node_i
   };
 }
 
+function memoryNodeSnapshot(row: any) {
+  return {
+    nodeId:String(row.node_id||''),nodeType:String(row.node_type||'memory'),objectType:row.object_type||null,objectId:row.object_id||null,
+    referencePath:String(row.reference_path||''),title:String(row.title||''),content:String(row.content||''),projectId:String(row.project_ref||''),
+    memoryKind:row.memory_kind||null,sourceKind:row.source_kind||'user',truthStatus:row.truth_status||'reported',evidenceStatus:row.evidence_status||'unverified',
+    importance:Number(row.importance||0),retentionPolicy:row.retention_policy||'standard',tier:row.tier||'hot',topicIds:Array.isArray(row.topic_ids)?row.topic_ids:[],
+    entityIds:Array.isArray(row.entity_ids)?row.entity_ids:[],sourceRefs:Array.isArray(row.source_refs)?row.source_refs:[],derivedFrom:Array.isArray(row.derived_from)?row.derived_from:[],
+    eventAt:row.event_at||null,datePrecision:row.date_precision||null,revision:Number(row.revision||1),contentHash:String(row.content_hash||''),schemaVersion:Number(row.schema_version||2),
+    metadata:row.metadata&&typeof row.metadata==='object'?row.metadata:{},createdAt:row.created_at,updatedAt:row.updated_at,
+  };
+}
+
+function claimRow(row:any){
+  const evidence=Array.isArray(row?.metadata?.claimEvidence)?row.metadata.claimEvidence.filter((item:any)=>item&&['SUPPORTED_BY','CONTRADICTS'].includes(String(item.relation||'').toUpperCase())&&String(item.sourceRef||'').trim()).map((item:any)=>({relation:String(item.relation).toUpperCase(),sourceRef:String(item.sourceRef),metadata:item.metadata&&typeof item.metadata==='object'?item.metadata:{}})):[];
+  return {node_id:String(row.node_id||''),title:String(row.title||''),content:String(row.content||''),project_ref:String(row.project_ref||''),truth_status:String(row.truth_status||'inferred'),evidence_status:String(row.evidence_status||'unverified'),importance:Number(row.importance||0),revision:Number(row.revision||1),reference_path:String(row.reference_path||''),evidence,created_at:String(row.created_at||''),updated_at:String(row.updated_at||'')};
+}
+
 async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<string | null> {
   if (!env.LLM_API_KEY) return null;
   const base = clean(env.LLM_BASE_URL || 'https://api.openai.com/v1', 500).replace(/\/$/, '');
@@ -164,7 +181,7 @@ async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<str
         model,
         messages: [
           { role: 'system', content: 'You are Ceo, a concise Thai secretary. Answer only from supplied Ceo Knowledge context. If context is insufficient, say so. Never invent appointments, tasks, people, or decisions.' },
-          { role: 'user', content: `คำถาม: ${prompt}\n\nCeo Knowledge context:\n${JSON.stringify(context).slice(0, 16000)}` },
+          { role: 'user', content: `เธเธณเธ–เธฒเธก: ${prompt}\n\nCeo Knowledge context:\n${JSON.stringify(context).slice(0, 16000)}` },
         ],
       }),
     });
@@ -231,6 +248,46 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const provenance = await rpc<any[]>(env, token, 'memory_provenance_get', { p_node_id:provenanceMatch[1] });
       return ok({ nodeId:provenanceMatch[1], provenance:Array.isArray(provenance) ? provenance : [] });
     }
+    if (url.pathname === '/api/claims' && request.method === 'GET') {
+      const projectId=clean(url.searchParams.get('projectId'),160),limit=safeLimit(url.searchParams.get('limit'),50,200);
+      const rows=await rest<any[]>(env,token,`memory_nodes${qs({select:'*',node_type:'eq.claim',...(projectId?{project_ref:'eq.'+projectId}:{}),order:'updated_at.desc',limit})}`);
+      return ok({claims:rows.map(claimRow)});
+    }
+    if (url.pathname === '/api/claims' && request.method === 'POST') {
+      const body=await jsonBody<any>(request),claim=clean(body.claim||body.content,20000),projectId=clean(body.projectId,160);
+      if(!claim)throw Object.assign(new Error('CLAIM_CONTENT_REQUIRED'),{status:400});
+      const digest=await sha256Hex(['claim',projectId,claim.toLocaleLowerCase().replace(/\s+/g,' ').trim()].join('\u001f'));
+      const nodeId='claim_'+digest.slice(0,20),contentHash=await sha256Hex(claim),eventDigest=await sha256Hex([nodeId,'1',contentHash].join('\u001f'));
+      const snapshot={nodeId,nodeType:'claim',referencePath:`ceo://claim/${nodeId}`,title:clean(body.title,300)||claim.slice(0,120),content:claim,projectId,memoryKind:'semantic',sourceKind:clean(body.sourceKind,40)||'user',truthStatus:clean(body.truthStatus,40)||'reported',evidenceStatus:'unverified',importance:Math.max(0,Math.min(3,Math.round(Number(body.importance??2)))),retentionPolicy:'standard',tier:'hot',topicIds:Array.isArray(body.topicIds)?body.topicIds.slice(0,30):[],entityIds:Array.isArray(body.entityIds)?body.entityIds.slice(0,30):[],sourceRefs:Array.isArray(body.sourceRefs)?body.sourceRefs.slice(0,60):[],derivedFrom:Array.isArray(body.derivedFrom)?body.derivedFrom.slice(0,60):[],eventAt:null,datePrecision:null,revision:1,contentHash,schemaVersion:2,metadata:{claimEvidence:[],origin:'mobile'}};
+      const result=await rpc<any>(env,token,'memory_replica_apply',{p_snapshot:snapshot,p_base_revision:0,p_client_event_id:'mem_evt_'+eventDigest.slice(0,24),p_device_id:null});
+      return ok(result,201);
+    }
+    const claimEvidence=url.pathname.match(/^\/api\/claims\/((?:claim)_[A-Za-z0-9_-]{8,80})\/evidence$/);
+    if(claimEvidence&&request.method==='POST'){
+      const body=await jsonBody<any>(request),relation=String(body.relation||'').toUpperCase(),sourceRef=clean(body.sourceRef,500);
+      if(!['SUPPORTED_BY','CONTRADICTS'].includes(relation)||!sourceRef)throw Object.assign(new Error('CLAIM_EVIDENCE_INVALID'),{status:400});
+      const rows=await rest<any[]>(env,token,`memory_nodes${qs({select:'*',node_id:'eq.'+claimEvidence[1],node_type:'eq.claim',limit:1})}`); const row=rows[0]; if(!row)throw Object.assign(new Error('CLAIM_NOT_FOUND'),{status:404});
+      const current=memoryNodeSnapshot(row),evidence=Array.isArray(current.metadata?.claimEvidence)?[...current.metadata.claimEvidence]:[];
+      const key=relation+'\u001f'+sourceRef;if(!evidence.some((item:any)=>String(item?.relation||'').toUpperCase()+'\u001f'+String(item?.sourceRef||'')===key))evidence.push({relation,sourceRef,metadata:body.metadata&&typeof body.metadata==='object'?body.metadata:{}});
+      const revision=Number(current.revision||1)+1,contentHash=await sha256Hex([current.content,JSON.stringify(evidence.map((item:any)=>[item.relation,item.sourceRef]))].join('\u001f'));
+      const snapshot={...current,revision,contentHash,metadata:{...(current.metadata||{}),claimEvidence:evidence}};
+      const eventDigest=await sha256Hex([current.nodeId,String(revision),contentHash].join('\u001f'));
+      const result=await rpc<any>(env,token,'memory_replica_apply',{p_snapshot:snapshot,p_base_revision:Number(current.revision||1),p_client_event_id:'mem_evt_'+eventDigest.slice(0,24),p_device_id:null});
+      return ok(result);
+    }
+    if (url.pathname === '/api/research' && request.method === 'GET') {
+      const projectId=clean(url.searchParams.get('projectId'),160);if(!projectId)throw Object.assign(new Error('PROJECT_ID_REQUIRED'),{status:400});
+      const rows=await rest<any[]>(env,token,`memory_nodes${qs({select:'*',project_ref:'eq.'+projectId,order:'updated_at.desc',limit:safeLimit(url.searchParams.get('limit'),200,500)})}`);
+      const data={projectId,claims:[] as any[],summaries:[] as any[],memories:[] as any[],decisions:[] as any[],documents:[] as any[],sources:[] as any[],other:[] as any[]};
+      for(const row of rows){if(row.node_type==='claim')data.claims.push(claimRow(row));else if(row.node_type==='summary')data.summaries.push(row);else if(row.node_type==='memory')data.memories.push(row);else if(row.node_type==='decision')data.decisions.push(row);else if(row.node_type==='document')data.documents.push(row);else if(row.node_type==='source')data.sources.push(row);else data.other.push(row);}
+      return ok(data);
+    }
+    if (url.pathname === '/api/summaries/current' && request.method === 'GET') {
+      const projectId=clean(url.searchParams.get('projectId'),160);if(!projectId)throw Object.assign(new Error('PROJECT_ID_REQUIRED'),{status:400});
+      const rows=await rest<any[]>(env,token,`memory_nodes${qs({select:'*',node_type:'eq.summary',project_ref:'eq.'+projectId,order:'updated_at.desc',limit:1})}`);
+      return ok({projectId,summary:rows[0]||null});
+    }
+
     if (url.pathname === '/api/tasks' && request.method === 'GET') {
       const status = clean(url.searchParams.get('status'), 40), limit = safeLimit(url.searchParams.get('limit'), 50, 100);
       const tasks = await rest<TaskRecord[]>(env, token, `tasks${qs({ select: '*', ...(status ? { status: `eq.${status}` } : {}), order: 'updated_at.desc', limit })}`);
@@ -268,25 +325,25 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       const body = await jsonBody<{ message?: string }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
-      const rememberMatch = message.match(/^(?:จำไว้(?:ว่า)?|จำว่า|remember\s*:?)\s*(.+)$/i);
+      const rememberMatch = message.match(/^(?:เธเธณเนเธงเน(?:เธงเนเธฒ)?|เธเธณเธงเนเธฒ|remember\s*:?)\s*(.+)$/i);
       if (rememberMatch?.[1]) {
-        const memory = await saveMemory(env, token, { title: 'จาก Ceo Mobile Chat', content: rememberMatch[1], memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile-chat'] });
-        return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้ว', memory });
+        const memory = await saveMemory(env, token, { title: 'เธเธฒเธ Ceo Mobile Chat', content: rememberMatch[1], memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile-chat'] });
+        return ok({ intent: 'remember', answer: 'เธเธณเนเธงเนเนเธ Ceo Knowledge เนเธฅเนเธง', memory });
       }
-      if (/(วันนี้|today|นัด|ตาราง|schedule)/i.test(message)) {
+      if (/(เธงเธฑเธเธเธตเน|today|เธเธฑเธ”|เธ•เธฒเธฃเธฒเธ|schedule)/i.test(message)) {
         const today = await listToday(env, token, url);
-        const answer = `วันนี้มี ${today.events.length} นัด/กิจกรรม และมีงานที่ยังเปิดอยู่ ${today.tasks.length} งาน`;
+        const answer = `เธงเธฑเธเธเธตเนเธกเธต ${today.events.length} เธเธฑเธ”/เธเธดเธเธเธฃเธฃเธก เนเธฅเธฐเธกเธตเธเธฒเธเธ—เธตเนเธขเธฑเธเน€เธเธดเธ”เธญเธขเธนเน ${today.tasks.length} เธเธฒเธ`;
         return ok({ intent: 'today', answer, today });
       }
-      if (/(งานค้าง|งานที่ต้องทำ|tasks?|todo)/i.test(message)) {
+      if (/(เธเธฒเธเธเนเธฒเธ|เธเธฒเธเธ—เธตเนเธ•เนเธญเธเธ—เธณ|tasks?|todo)/i.test(message)) {
         const tasks = await rest<TaskRecord[]>(env, token, `tasks${qs({ select: '*', status: 'in.(open,in_progress,waiting,overdue)', order: 'due_at.asc.nullslast,updated_at.desc', limit: 30 })}`);
-        const answer = tasks.length ? `มีงานที่ยังไม่เสร็จ ${tasks.length} งาน: ${tasks.slice(0, 5).map(task => task.title).join(', ')}` : 'ตอนนี้ไม่มีงานค้างใน Ceo Knowledge';
+        const answer = tasks.length ? `เธกเธตเธเธฒเธเธ—เธตเนเธขเธฑเธเนเธกเนเน€เธชเธฃเนเธ ${tasks.length} เธเธฒเธ: ${tasks.slice(0, 5).map(task => task.title).join(', ')}` : 'เธ•เธญเธเธเธตเนเนเธกเนเธกเธตเธเธฒเธเธเนเธฒเธเนเธ Ceo Knowledge';
         return ok({ intent: 'tasks', answer, tasks });
       }
       const search = await searchKnowledge(env, token, message, 10);
       const fallbackAnswer = cloudChatFallback(message, search.results);
       const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);
-      if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device }, 202);
+      if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'เธเธณเธฅเธฑเธเธชเนเธเธเธณเธ–เธฒเธกเนเธซเน Ollama เธเธเน€เธเธฃเธทเนเธญเธ Ceoโ€ฆ', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device }, 202);
       const llm = await maybeLlm(env, message, search.results);
       const mode = llm ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
       return ok({ intent: 'recall', answer: llm || fallbackAnswer, search, ai: Boolean(llm), aiConfigured: Boolean(env.LLM_API_KEY), mode, provider: llm ? 'cloud-ai' : 'knowledge' });
@@ -303,11 +360,25 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const now = Date.now();
       return ok({ devices: devices.map(device => ({ ...device, effective_status: device.status === 'disabled' ? 'disabled' : device.last_seen_at && now - Date.parse(device.last_seen_at) <= 45_000 ? 'online' : 'offline' })) });
     }
+    const deviceAccessMatch = url.pathname.match(/^\/api\/devices\/([0-9a-f-]{36})\/access$/i);
+    if (deviceAccessMatch && request.method === 'POST') {
+      const body = await jsonBody<{ action?: string }>(request);
+      const action = parseDeviceAccessAction(body.action);
+      const device = await rpc<DeviceRecord | DeviceRecord[]>(env, token, 'device_set_access', { p_device_id: deviceAccessMatch[1], p_action: action });
+      return ok(Array.isArray(device) ? device[0] || null : device);
+    }
+
     if (url.pathname === '/api/devices/pair' && request.method === 'POST') {
       const body = await jsonBody<{ code?: string }>(request), code = clean(body.code, 20).replace(/\s/g, '');
       if (!/^\d{6}$/.test(code)) throw Object.assign(new Error('PAIRING_CODE_FORMAT'), { status: 400 });
       const device = await rpc<DeviceRecord | DeviceRecord[]>(env, token, 'device_pairing_claim', { p_code_hash: await sha256Hex(code) });
       return ok(Array.isArray(device) ? device[0] || null : device);
+    }
+
+    if (url.pathname === '/api/runtime/approvals' && request.method === 'GET') {
+      const limit = safeLimit(url.searchParams.get('limit'), 20, 50);
+      const jobs = await rest<any[]>(env, token, `runtime_jobs${qs({ select: 'id,device_id,tool,arguments,status,approval_state,origin,created_at,expires_at', status: 'eq.pending', approval_state: 'eq.pending', order: 'created_at.desc', limit })}`);
+      return ok({ approvals: jobs });
     }
 
     if (url.pathname === '/api/runtime/jobs' && request.method === 'GET') {
@@ -321,10 +392,18 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       assertRemoteTool(tool);
       const devices = await rest<DeviceRecord[]>(env, token, `devices${qs({ select: 'id,trusted,status,last_seen_at', id: `eq.${deviceId}`, limit: 1 })}`);
       if (!devices[0] || !devices[0].trusted || devices[0].status === 'disabled') throw Object.assign(new Error('DEVICE_NOT_TRUSTED'), { status: 403 });
-      const payload = { device_id: deviceId, tool, arguments: body.arguments && typeof body.arguments === 'object' ? body.arguments : {}, status: 'pending', approval_state: 'not_required', origin: 'mobile', idempotency_key: clean(body.idempotencyKey, 200) || newIdempotencyKey(), expires_at: new Date(Date.now() + 15 * 60_000).toISOString() };
+      const payload = { device_id: deviceId, tool, arguments: body.arguments && typeof body.arguments === 'object' ? body.arguments : {}, status: 'pending', approval_state: remoteApprovalState(tool), origin: 'mobile', idempotency_key: clean(body.idempotencyKey, 200) || newIdempotencyKey(), expires_at: new Date(Date.now() + 15 * 60_000).toISOString() };
       const job = await insertRuntimeJob(env, token, payload);
       return ok(job, 202);
     }
+    const approvalMatch = url.pathname.match(/^\/api\/runtime\/jobs\/([0-9a-f-]{36})\/approval$/i);
+    if (approvalMatch && request.method === 'POST') {
+      const body = await jsonBody<{ decision?: string }>(request);
+      const decision = parseApprovalDecision(body.decision);
+      const job = await rpc<any>(env, token, 'runtime_job_set_approval', { p_job_id: approvalMatch[1], p_decision: decision });
+      return ok(Array.isArray(job) ? job[0] || null : job);
+    }
+
     const jobMatch = url.pathname.match(/^\/api\/runtime\/jobs\/([0-9a-f-]{36})$/i);
     if (jobMatch && request.method === 'GET') {
       const jobs = await rest<any[]>(env, token, `runtime_jobs${qs({ select: '*', id: `eq.${jobMatch[1]}`, limit: 1 })}`);
@@ -340,7 +419,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok(filterActiveKnowledgeGraph({ nodes, links: links.map(link=>({ ...link, weight:Number(link.weight||0) })) }));
     }
 
-    return fail('NOT_FOUND', 'ไม่พบ API ที่ร้องขอ', 404);
+    return fail('NOT_FOUND', 'เนเธกเนเธเธ API เธ—เธตเนเธฃเนเธญเธเธเธญ', 404);
   } catch (error: any) {
     const status = Number(error?.status) || (/AUTH/i.test(String(error?.message)) ? 401 : 400);
     const message = clean(error?.message || error || 'REQUEST_FAILED', 1000);

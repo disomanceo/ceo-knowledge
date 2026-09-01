@@ -1,6 +1,6 @@
 # Memory OS M3 Checkpoint — 2026-08-31
 
-Status: WIP checkpoint, not production-certified.
+Status: COMPLETE — production migration deployed and M3 certification gates passed on 2026-09-01.
 
 ## Completed in this checkpoint
 
@@ -47,3 +47,7 @@ Next step:
 - No direct authenticated INSERT/UPDATE/DELETE on M3 replica tables; mutation goes through bounded authenticated RPCs.
 - Existing domain-table UUID primary keys are unchanged.
 - Browser Companion stash in Ceo-MCP-Agent is untouched.
+
+## Closure
+
+M3 migration is deployed, migration history is aligned, Local/Cloud sync + conflict + provenance tests pass, and the Memory OS roadmap has advanced through M4 production certification. See MEMORY-M4-CERTIFICATION.md.

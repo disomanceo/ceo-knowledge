@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { assertRemoteTool, safeLimit, searchOr, sha256Hex } from '../src/security';
+import { assertRemoteTool, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from '../src/security';
 
 
 describe('gateway security', () => {
@@ -19,6 +19,17 @@ describe('gateway security', () => {
   it('builds a tokenized PostgREST OR expression', () => {
     expect(searchOr(['title','content'], 'Knowledge Core Runtime')).toContain('title.ilike.*knowledge*');
     expect(searchOr(['title','content'], 'Knowledge Core Runtime')).toContain('content.ilike.*runtime*');
+  });
+
+  it('validates bounded Remote Console decisions', () => {
+    expect(parseDeviceAccessAction('disable')).toBe('disable');
+    expect(parseDeviceAccessAction('revoke')).toBe('revoke');
+    expect(() => parseDeviceAccessAction('delete')).toThrow(/DEVICE_ACTION_INVALID/);
+    expect(parseApprovalDecision('approved')).toBe('approved');
+    expect(() => parseApprovalDecision('maybe')).toThrow(/APPROVAL_DECISION_INVALID/);
+    expect(remoteApprovalState('runtime.status')).toBe('not_required');
+    expect(remoteApprovalState('document.read')).toBe('pending');
+    expect(remoteApprovalState('filesystem.read')).toBe('pending');
   });
 
   it('hashes pairing codes deterministically', async () => {

@@ -121,6 +121,37 @@ export interface MemoryReplicaApplyResult {
   localSnapshot?: Record<string, unknown> | null;
 }
 
+export interface ClaimEvidenceRecord {
+  relation: 'SUPPORTED_BY' | 'CONTRADICTS';
+  sourceRef: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface ClaimRecord {
+  node_id: string;
+  title: string;
+  content: string;
+  project_ref: string;
+  truth_status: MemoryTruthStatus;
+  evidence_status: MemoryEvidenceStatus;
+  importance: number;
+  revision: number;
+  reference_path: string;
+  evidence: ClaimEvidenceRecord[];
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ResearchWorkspaceRecord {
+  projectId: string;
+  claims: ClaimRecord[];
+  summaries: Array<Record<string, unknown>>;
+  memories: Array<Record<string, unknown>>;
+  decisions: Array<Record<string, unknown>>;
+  documents: Array<Record<string, unknown>>;
+  sources: Array<Record<string, unknown>>;
+}
+
 export interface MemoryGraphEdge {
   from_node_id: string;
   to_node_id: string;
