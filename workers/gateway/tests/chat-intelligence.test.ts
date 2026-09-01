@@ -7,6 +7,9 @@ describe('chat intelligence',()=>{
  it('resolves explicit Thai Buddhist date',()=>{const x=parseDateIntent('18 ก.ย. 2569 มีอะไร',now)!;expect(x.year).toBe(2026);expect(x.month).toBe(9);expect(x.day).toBe(18)});
  it('routes date before generic recall',()=>{expect(detectChatIntent('วันที่ 18 มีอะไรไหม',now).kind).toBe('date');expect(detectChatIntent('งานค้างมีอะไรบ้าง',now).kind).toBe('tasks')});
  it('routes current market questions to LIVE before calendar parsing',()=>{expect(isLiveExternalQuery('หุ้นวันนี้ตัวไหนน่าสนใจ')).toBe(true);expect(detectChatIntent('หุ้นวันนี้ตัวไหนน่าสนใจ',now).kind).toBe('live');expect(detectChatIntent('วันนี้มีงานอะไรบ้าง',now).kind).not.toBe('live')});
+ it('routes current weather to LIVE instead of Today calendar',()=>{expect(isLiveExternalQuery('เช็คสภาพอากาศวันนี้')).toBe(true);expect(detectChatIntent('เช็คสภาพอากาศวันนี้',now).kind).toBe('live');expect(detectChatIntent('พรุ่งนี้ฝนตกไหม',now).kind).toBe('live')});
+ it('preserves semantic appointment scope for day and week questions',()=>{const d=parseDateIntent('พรุ่งนี้มีนัดอะไรไหม',now)!;expect(d.scope).toBe('appointments');const w=parseTemporalIntent('สัปดาห์หน้ามีนัดไหม',now)!;expect(w.scope).toBe('appointments')});
+ it('does not render midnight as an appointment time for all-day events',()=>{const i=parseDateIntent('พรุ่งนี้มีนัดอะไรไหม',now)!;const a=composeTemporalAnswer(i,{events:[{title:'นิเทศการสอนครูดาว คาบที่ 3',start_at:'2026-09-01T17:00:00Z',all_day:true,event_type:'activity',location:''}],tasks:[],memories:[]});expect(a).toContain('นิเทศการสอนครูดาว คาบที่ 3');expect(a).not.toContain('00:00')});
  it('does not treat ordinary numbers as calendar dates',()=>{expect(detectChatIntent('โปรเจกต์ 2 มีอะไรไหม',now).kind).toBe('recall')});
  it('routes a bare leading day question as a date',()=>{const x=detectChatIntent('17 มีอะไรไหม',now);expect(x.kind).toBe('date');if(x.kind==='date'){expect(x.day).toBe(17);expect(x.month).toBe(9)}});
  it('matches exact Thai dates embedded in memory text',()=>{const i=parseDateIntent('17 ก.ย. มีอะไร',now)!;expect(dateTextMatchesIntent('วันที่ 17 กันยายน 2569 ต้องส่งเล่ม PA ให้สำนักงานเขต',i)).toBe(true);expect(dateTextMatchesIntent('วันที่ 18 กันยายน 2569 มีงานเลี้ยง',i)).toBe(false)});
@@ -68,6 +71,55 @@ describe('structured chat retrieval',()=>{
    });
    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เดือนนี้มีงานเกษียณอะไรบ้าง'})}),apiEnv),payload:any=await response.json();
    expect(payload.data.intent).toBe('temporal');expect(payload.data.range.granularity).toBe('month');expect(payload.data.answer).toContain('งานเลี้ยงเกษียณ ผอ. เผือก');expect(payload.data.answer).toContain('งานเกษียณ ผอ. เผือก ที่โรงเรียน');expect(payload.data.answer).not.toContain('ประชุมครู');expect(payload.data.answer).not.toContain('เดือนตุลาคม');
+ });
+ it('routes เช็คสภาพอากาศวันนี้ to LIVE provider and never Today calendar',async()=>{
+   const calls:any[]=[];vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=String(input),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url:decodeURIComponent(url),method,body});
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/devices?'))return json([{id:'dev1',device_name:'Ceo PC',runtime_id:'r1',status:'online',trusted:true,last_seen_at:new Date().toISOString(),capabilities:{remoteTools:['provider.chat']}}]);
+     if(url.includes('/rest/v1/runtime_jobs')&&method==='POST')return json([{id:'job-weather',...body}],201);
+     throw new Error('unexpected '+method+' '+url);
+   });
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เช็คสภาพอากาศวันนี้'})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.intent).toBe('live');expect(payload.data.mode).toBe('runtime-provider-pending');expect(payload.data.live).toBe(true);
+   const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.arguments.live).toBe(true);expect(job.body.arguments.strategy).toBe('cloud-first');
+   expect(calls.some(x=>x.url.includes('/rest/v1/events?'))).toBe(false);
+ });
+ it('analyzes พรุ่งนี้มีนัดอะไรไหม from deduped appointment context',async()=>{
+   vi.useFakeTimers();vi.setSystemTime(now);const calls:any[]=[];
+   try{vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=String(input),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url:decodeURIComponent(url),method,body});
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/events?'))return json([
+       {id:'teach',title:'จัดทำสื่อการสอนและจัดการเรียนการสอนด้วย AI',description:'วันที่ 2-3 กันยายน 2569 ทำสื่อและสอนด้วย AI',event_type:'activity',start_at:'2026-09-01T17:00:00Z',end_at:'2026-09-03T16:59:59Z',all_day:true,location:'',status:'planned',metadata:{}},
+       {id:'supervise',title:'นิเทศการสอนครูดาว คาบที่ 3',description:'วันที่ 2 กันยายน 2569 นิเทศการสอนครูดาว คาบที่ 3',event_type:'activity',start_at:'2026-09-01T17:00:00Z',end_at:null,all_day:true,location:'',status:'planned',metadata:{}},
+       {id:'duplicate',title:'Event: พรุ่งนี้ชั่วโมงที่ 3 นิเทศการสอน ครูดาว',description:'พรุ่งนี้ชั่วโมงที่ 3 นิเทศการสอน ครูดาว',event_type:'other',start_at:'2026-09-02T02:00:00Z',end_at:null,all_day:false,location:'',status:'planned',metadata:{autoMemory:true}}
+     ]);
+     if(url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memory_nodes?')||url.includes('/rest/v1/memories?'))return json([]);
+     if(url.includes('/rest/v1/devices?'))return json([{id:'dev1',device_name:'Ceo PC',runtime_id:'r1',status:'online',trusted:true,last_seen_at:new Date().toISOString(),capabilities:{remoteTools:['provider.chat']}}]);
+     if(url.includes('/rest/v1/runtime_jobs')&&method==='POST')return json([{id:'job-schedule',...body}],201);
+     throw new Error('unexpected '+method+' '+url);
+   });
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'พรุ่งนี้มีนัดอะไรไหม'})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.range.scope).toBe('appointments');expect(payload.data.temporal.events).toHaveLength(1);expect(payload.data.temporal.events[0].id).toBe('supervise');
+   expect(payload.data.fallbackAnswer).toContain('นิเทศการสอนครูดาว คาบที่ 3');expect(payload.data.fallbackAnswer).not.toContain('จัดทำสื่อ');expect(payload.data.fallbackAnswer).not.toContain('00:00');
+   expect(payload.data.mode).toBe('runtime-provider-pending');const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.arguments.task).toBe('reasoning');expect(job.body.arguments.live).toBe(false);expect(job.body.arguments.context).toHaveLength(1);
+   }finally{vi.useRealTimers();}
+ });
+ it('dedupes legacy movie memory before AI synthesis for สัปดาห์หน้ามีนัดไหม',async()=>{
+   vi.useFakeTimers();vi.setSystemTime(now);const calls:any[]=[];
+   try{vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=String(input),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url:decodeURIComponent(url),method,body});
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/events?'))return json([{id:'movie',title:'พานักเรียนไปดูภาพยนตร์ที่ Big C สุพรรณบุรี',description:'วันที่ 7 กันยายน 2569 พานักเรียนไปดูภาพยนตร์ที่ Big C สุพรรณบุรี',event_type:'activity',start_at:'2026-09-06T17:00:00Z',end_at:null,all_day:true,location:'Big C สุพรรณบุรี',status:'planned',metadata:{}}]);
+     if(url.includes('/rest/v1/tasks?'))return json([]);
+     if(url.includes('/rest/v1/memories?'))return json([{id:'legacy-movie',title:'พานักเรียนไปดูภาพยนต์ที่ BigC',content:'วันที่ 7 ก.ย. 2569 พานักเรียนไปดูภาพยนต์ที่ BigC ให้ครูแต่ละชั้นพานักเรียนไป',status:'active'}]);
+     if(url.includes('/rest/v1/memory_nodes?'))return json([]);
+     if(url.includes('/rest/v1/devices?'))return json([{id:'dev1',device_name:'Ceo PC',runtime_id:'r1',status:'online',trusted:true,last_seen_at:new Date().toISOString(),capabilities:{remoteTools:['provider.chat']}}]);
+     if(url.includes('/rest/v1/runtime_jobs')&&method==='POST')return json([{id:'job-week',...body}],201);
+     throw new Error('unexpected '+method+' '+url);
+   });
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'สัปดาห์หน้ามีนัดไหม'})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.range.scope).toBe('appointments');expect(payload.data.temporal.events).toHaveLength(1);expect(payload.data.temporal.memories).toHaveLength(0);expect(payload.data.fallbackAnswer).toContain('Big C สุพรรณบุรี');expect(payload.data.fallbackAnswer).not.toContain('00:00');
+   const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.arguments.context).toHaveLength(1);
+   }finally{vi.useRealTimers();}
  });
 });
 

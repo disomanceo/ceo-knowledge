@@ -1,6 +1,6 @@
 import { sha256Hex } from './security';
 import { rest, rpc, type Env } from './supabase';
-import { isQuestionLike } from './chat-intelligence';
+import { isQuestionLike, scheduleTextSimilarity } from './chat-intelligence';
 
 export type AutoMemoryKind = 'memory' | 'event' | 'task' | 'contact' | 'project_knowledge' | 'ignore';
 export type AutoMemoryRetention = 'permanent' | 'consolidation' | 'daily_log' | 'none';
@@ -191,16 +191,18 @@ export function parseThaiDateTime(text: string, now = new Date()): string | null
   }
 
   if (!date) {
-    for (const [name, month] of Object.entries(MONTHS)) {
+    const base=bangkokDateParts(now);
+    for (const [name, month] of Object.entries(MONTHS).sort((a,b)=>b[0].length-a[0].length)) {
       const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const match = value.match(new RegExp(`(?:^|\\s)(\\d{1,2})\\s*${escaped}\\s*(\\d{2,4})(?:\\s|$)`, 'i'));
+      const match = value.match(new RegExp(`(?:^|\\s)(?:วันที่\\s*)?(\\d{1,2})\\s*${escaped}(?:\\s*(?:พ\\.?ศ\\.?\\s*)?(\\d{2,4}))?(?=\\s|$|[,;])`, 'i'));
       if (match) {
-        date = { year: normalizeYear(Number(match[2])), month, day: Number(match[1]) };
+        const day=Number(match[1]);let year=match[2]?normalizeYear(Number(match[2])):base.year;
+        if(!match[2]){const candidate=bangkokIso(year,month,day,0,0),today=bangkokIso(base.year,base.month,base.day,0,0);if(candidate&&today&&Date.parse(candidate)<Date.parse(today))year+=1;}
+        date = { year, month, day };
         break;
       }
     }
   }
-
   if (!date) {
     const base = bangkokDateParts(now);
     let offset: number | null = null;
@@ -240,7 +242,7 @@ function eventType(text: string): AutoMemoryDecision['eventType'] {
   if (/เตือน|remind/i.test(text)) return 'reminder';
   if (/นัด|appointment/i.test(text)) return 'appointment';
   if (/ประชุม|meeting/i.test(text)) return 'meeting';
-  if (/กิจกรรม|งานเลี้ยง|ทดสอบ|อบรม|สัมมนา|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|activity/i.test(text)) return 'activity';
+  if (/กิจกรรม|งานเลี้ยง|ทดสอบ|อบรม|สัมมนา|นิเทศ(?:การสอน)?|ประเมิน(?:\s*PA)?|ตรวจประเมิน|ตรวจเยี่ยม|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|activity/i.test(text)) return 'activity';
   return 'other';
 }
 
@@ -254,7 +256,7 @@ function contactFields(text: string) {
 function heuristicKind(text: string, eventAt: string | null, explicit: boolean, endAt: string | null = null, now = new Date()): { kind: AutoMemoryKind; confidence: number } {
   const question = isQuestionLike(text);
   const assignmentCue = /สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|ฝากให้|ให้[^\n]{0,120}(?:ทำ|จัด|รวบรวม|ถ่ายรูป|ส่ง|เตรียม|ตรวจ|แจ้ง)|รับผิดชอบ/i.test(text);
-  const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|นิเทศ(?:การสอน)?|สังเกตการสอน|ตรวจเยี่ยมการสอน|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|appointment|meeting|schedule/i.test(text);
+  const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|นิเทศ(?:การสอน)?|ประเมิน(?:\s*PA)?|ตรวจประเมิน|สังเกตการสอน|ตรวจเยี่ยมการสอน|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|appointment|meeting|schedule/i.test(text);
   const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|รับผิดชอบ|todo|task|deadline/i.test(text);
   const projectCue = /โปรเจกต์|โครงการ|ระบบ|workspace|repository|repo|architecture|roadmap|version|เวอร์ชัน|ตัดสินใจ|เลือกใช้|กำหนดให้/i.test(text);
   const preferenceCue = /ฉัน(?:ชอบ|ไม่ชอบ|ต้องการ)|ผม(?:ชอบ|ไม่ชอบ|ต้องการ)|ต่อไป(?:นี้)?|จากนี้(?:ไป)?|ทุกครั้ง|prefer/i.test(text);
@@ -262,7 +264,7 @@ function heuristicKind(text: string, eventAt: string | null, explicit: boolean, 
   const deadlineCue = /ต้องส่ง|กำหนดส่ง|ครบกำหนด|deadline/i.test(text);
   const eventTime=eventAt?Date.parse(eventAt):NaN;
   const prospective=Number.isFinite(eventTime)&&eventTime>=now.getTime()-12*60*60*1000;
-  const structuredFutureCue=prospective&&/(?:คาบ(?:ที่)?\s*\d+|ครู|นักเรียน|โรงเรียน|สำนักงาน|ประชุม|นิเทศ|อบรม|สอน|สอบ|ทดสอบ|พา|ไป|จัด|ทำ|ตรวจ|เยี่ยม|เดินทาง|กิจกรรม)/i.test(text);
+  const structuredFutureCue=prospective&&/(?:คาบ(?:ที่)?\s*\d+|ครู|นักเรียน|โรงเรียน|สำนักงาน|ประชุม|นิเทศ|ประเมิน|อบรม|สอน|สอบ|ทดสอบ|พา|ไป|จัด|ทำ|ตรวจ|เยี่ยม|เดินทาง|กิจกรรม)/i.test(text);
 
   if (eventAt && endAt && deadlineCue) return { kind: 'task', confidence: 0.97 };
   if (eventAt && endAt && (assignmentCue || eventCue)) return { kind: 'event', confidence: 0.98 };
@@ -297,8 +299,10 @@ function retention(score: number, explicit: boolean, kind: AutoMemoryKind): Auto
 }
 
 function titleFor(content: string, kind: AutoMemoryKind): string {
-  const prefix = kind === 'event' ? 'Event' : kind === 'task' ? 'Task' : kind === 'contact' ? 'Contact' : kind === 'project_knowledge' ? 'Project' : 'Memory';
-  return `${prefix}: ${content.replace(/\s+/g, ' ').trim()}`.slice(0, 180);
+  const value=content.replace(/\s+/g,' ').trim();
+  if(kind==='event'||kind==='task')return value.slice(0,180);
+  const prefix = kind === 'contact' ? 'Contact' : kind === 'project_knowledge' ? 'Project' : 'Memory';
+  return `${prefix}: ${value}`.slice(0,180);
 }
 
 export function classifyAutoMemoryHeuristic(input: AutoMemoryInput, now = new Date()): AutoMemoryDecision {
@@ -309,12 +313,14 @@ export function classifyAutoMemoryHeuristic(input: AutoMemoryInput, now = new Da
   const dateRange = parseThaiDateRange(content, now);
   let eventAt = dateRange?.startAt || parseThaiDateTime(content, now);
   const endAt = dateRange?.endAt || null;
-  const classPeriod=/คาบ(?:ที่)?\s*\d+/i.test(content);
+  const classPeriod=/(?:คาบ|ชั่วโมง)(?:ที่)?\s*\d+/i.test(content);
+  const explicitTime=/(?:เวลา\s*)?\d{1,2}[:.]\d{2}|ตอนเช้า|ช่วงเช้า|ตอนบ่าย|ช่วงบ่าย|ตอนเย็น|ช่วงเย็น/i.test(content);
   let allDay = Boolean(dateRange?.allDay);
-  if(eventAt&&classPeriod&&!/(?:เวลา\s*)?\d{1,2}[:.]\d{2}|ตอนเช้า|ช่วงเช้า|ตอนบ่าย|ช่วงบ่าย|ตอนเย็น|ช่วงเย็น/i.test(content)){
+  if(eventAt&&classPeriod&&!explicitTime){
     const p=bangkokDateParts(new Date(eventAt)),midnight=bangkokIso(p.year,p.month,p.day,0,0);if(midnight)eventAt=midnight;allDay=true;
   }
   const base = heuristicKind(content, eventAt, explicit, endAt, now);
+  if(eventAt&&!dateRange&&!explicitTime&&base.kind==='event'&&!allDay){const p=bangkokDateParts(new Date(eventAt)),midnight=bangkokIso(p.year,p.month,p.day,0,0);if(midnight)eventAt=midnight;allDay=true;}
   const kind: AutoMemoryKind = blocked ? 'ignore' : base.kind;
   const parts = scoreParts(content, kind, base.confidence, explicit, eventAt);
   const rawScore = 0.30 * parts.userRelevance + 0.25 * parts.futureUtility + 0.20 * parts.eventSalience + 0.15 * parts.engagement + 0.10 * parts.confidence;
@@ -517,6 +523,14 @@ async function findDomainCapture(env: Env, token: string, table: 'events' | 'tas
   return await rest<any[]>(env, token, `${table}?${q.toString()}`);
 }
 
+async function findSimilarEvent(env:Env,token:string,decision:AutoMemoryDecision){
+  if(!decision.eventAt)return null;const p=bangkokDateParts(new Date(decision.eventAt)),from=bangkokIso(p.year,p.month,p.day,0,0);if(!from)return null;const to=new Date(Date.parse(from)+86400000-1).toISOString();
+  const q=new URLSearchParams();q.set('select','*');q.set('start_at',`gte.${from}`);q.set('order','start_at.asc');q.set('limit','50');
+  const rows=await rest<any[]>(env,token,`events?${q.toString()}`).catch(()=>[]);
+  const source=`${decision.title} ${decision.content}`;
+  return rows.filter(row=>row?.status!=='cancelled'&&Date.parse(String(row?.start_at||''))<=Date.parse(to)).map(row=>({row,similarity:Math.max(scheduleTextSimilarity(source,`${row?.title||''} ${row?.description||''}`),scheduleTextSimilarity(decision.title,row?.title))})).sort((a,b)=>b.similarity-a.similarity).find(item=>item.similarity>=.72)?.row||null;
+}
+
 function domainMetadata(input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string) {
   return { autoMemory: true, pinned: decision.explicit, retention: decision.retention, projectRef: clean(input.projectId, 160), source, sourceRef: clean(input.sourceRef, 500), conversationKey, score: decision.score, captureFingerprint };
 }
@@ -550,6 +564,8 @@ async function persistEvent(env: Env, token: string, input: AutoMemoryInput, dec
       return { kind: 'event', id: existing[0].id, nodeId:mirror.nodeId, record: existing[0], replica:mirror.replica, duplicate: true };
     }
   }
+  const similar=await findSimilarEvent(env,token,decision);
+  if(similar){const mirror=await persistReplicaNode(env,token,{prefix:'evt',nodeType:'event',objectType:'event',objectId:similar.id,title:similar.title||decision.title,content:similar.description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[similar.id,clean(input.sourceRef,500)].filter(Boolean),eventAt:similar.start_at||decision.eventAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});return{kind:'event',id:similar.id,nodeId:mirror.nodeId,record:similar,replica:mirror.replica,duplicate:true,semanticDuplicate:true};}
   const body: any = { title: decision.title, description: decision.content, event_type: decision.eventType, start_at: decision.eventAt, end_at: decision.endAt, all_day: decision.allDay, timezone: clean(input.timezone || 'Asia/Bangkok', 80), location: '', status: 'planned', priority: decision.importance >= 3 ? 'high' : 'normal', remind_at: null, tags: ['auto-memory', source], metadata: { ...domainMetadata(input, decision, source, conversationKey, captureFingerprint), endAt: decision.endAt, allDay: decision.allDay } };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
   const rows = await rest<any[]>(env, token, 'events?select=*', { method: 'POST', body, prefer: 'return=representation' });

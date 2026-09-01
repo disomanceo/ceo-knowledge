@@ -73,6 +73,8 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
     expect(d.content).toContain('คาบที่ 3');
   });
 
+  it('treats ชั่วโมงที่ 3 as a class period without inventing 09:00',()=>{const d=classifyAutoMemoryHeuristic({message:'พรุ่งนี้ชั่วโมงที่ 3 นิเทศการสอน ครูดาว',source:'mobile'},now);expect(d.kind).toBe('event');expect(d.eventAt).toBe('2026-09-01T17:00:00.000Z');expect(d.allDay).toBe(true)});
+
   it('resolves bare save follow-ups to the latest user content, never the Ceo reply',()=>{
     const context=[{role:'user',text:'พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3'},{role:'ceo',text:'พรุ่งนี้ไม่มีนิเทศการสอนครูดาว'}];
     const r=resolveMemoryCaptureTurn('ให้บันทึก',context);
@@ -85,6 +87,12 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
     const r=resolveMemoryCaptureTurn('ไม่ใช่ บันทึก พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3',[]);
     expect(r.correction).toBe(true);
     expect(r.message).toBe('บันทึกไว้ว่า พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
+  });
+
+  it('classifies a Thai day-month PA evaluation without a year as an all-day event',()=>{
+    const d=classifyAutoMemoryHeuristic({message:'วันที่ 14 กันยายน ประเมิน PA โรงเรียนบางจิก',source:'mobile'},now);
+    expect(parseThaiDateTime('วันที่ 14 กันยายน ประเมิน PA โรงเรียนบางจิก',now)).not.toBeNull();
+    expect(d.kind).toBe('event');expect(d.eventType).toBe('activity');expect(d.eventAt).toBe('2026-09-13T17:00:00.000Z');expect(d.allDay).toBe(true);expect(d.retention).toBe('permanent');expect(d.needsConfirmation).toBe(false);expect(d.title).not.toMatch(/^Event:/);
   });
 
   it('classifies a dated retirement party as a permanent event',()=>{
@@ -201,6 +209,24 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
       expect(payload.data.intent).toBe('remember');expect(payload.data.answer).toContain('บันทึกเป็นกิจกรรม');
       const eventCall=calls.find(x=>x.url.endsWith('/rest/v1/events?select=*'));expect(eventCall.body.description).toContain('พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');expect(eventCall.body.description).not.toContain('พรุ่งนี้ไม่มีนิเทศ');
       expect(calls.some(x=>x.url.includes('/runtime_jobs'))).toBe(false);
+    }finally{vi.useRealTimers();}
+  });
+
+  it('auto-saves วันที่ 14 กันยายน ประเมิน PA โรงเรียนบางจิก as a structured event without AI',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(now);const calls:any[]=[];
+    try{vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url,method,body});
+      if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-pa',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
+      if(url.includes('/rest/v1/events?')&&method==='GET')return json([]);
+      if(url.endsWith('/rest/v1/events?select=*')&&method==='POST')return json([{id:'evt-pa',...body}]);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'วันที่ 14 กันยายน ประเมิน PA โรงเรียนบางจิก',conversationId:'mobile:pa'})}),env),payload:any=await response.json();
+    expect(payload.data.intent).toBe('remember');expect(payload.data.mode).toBe('knowledge');expect(payload.data.answer).toContain('บันทึกเป็นกิจกรรม');
+    const eventCall=calls.find(x=>x.url.endsWith('/rest/v1/events?select=*')&&x.method==='POST');expect(eventCall.body.start_at).toBe('2026-09-13T17:00:00.000Z');expect(eventCall.body.all_day).toBe(true);expect(eventCall.body.event_type).toBe('activity');expect(eventCall.body.title).not.toMatch(/^Event:/);
+    expect(calls.some(x=>x.url.includes('/runtime_jobs'))).toBe(false);
     }finally{vi.useRealTimers();}
   });
 
