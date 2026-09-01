@@ -94,7 +94,7 @@ describe('topic recall across structured secretary data',()=>{
    expect(payload.data.answer).toBe('ที่ Big C สุพรรณบุรีครับ');expect(payload.data.context.query).toBe('ดูภาพยนต์วันไหน');expect(payload.data.context.field).toBe('location');expect(payload.data.mode).toBe('knowledge');
    expect(calls.some(x=>x.includes('/rest/v1/runtime_jobs'))).toBe(false);
  });
- it('answers งานเกษียณจัดวันไหน from structured Events without Auto Router',async()=>{
+ it('answers จัดงานเกษียณวันไหน from structured Events without Auto Router',async()=>{
    const calls:string[]=[];vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);calls.push(decodeURIComponent(url));
      if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
      if(url.includes('/rest/v1/events?'))return json([
@@ -104,8 +104,23 @@ describe('topic recall across structured secretary data',()=>{
      if(url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/conversation_summaries?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/memory_nodes?')||url.includes('/rest/v1/devices?'))return json([]);
      throw new Error('unexpected '+url);
    });
-   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'งานเกษียณจัดวันไหน'})}),apiEnv),payload:any=await response.json();
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'จัดงานเกษียณวันไหน'})}),apiEnv),payload:any=await response.json();
    expect(payload.data.intent).toBe('recall');expect(payload.data.mode).toBe('knowledge');expect(payload.data.answer).toContain('18 กันยายน 2569');expect(payload.data.answer).toContain('25 กันยายน 2569');
+   expect(calls.some(x=>x.includes('/rest/v1/runtime_jobs'))).toBe(false);
+ });
+ it('uses prior retirement subject for วันไหนบ้าง without Ollama',async()=>{
+   const calls:string[]=[];vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);calls.push(decodeURIComponent(url));
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/events?'))return json([
+       {id:'r1',title:'งานเลี้ยงเกษียณ ผอ. เผือก',description:'งานเลี้ยงเกษียณช่วงเย็น',event_type:'activity',start_at:'2026-09-18T10:00:00.000Z',end_at:null,all_day:false,timezone:'Asia/Bangkok',location:'',status:'planned',priority:'normal',updated_at:'2026-09-01T08:39:42.000Z'},
+       {id:'r2',title:'งานเกษียณ ผอ. เผือก ที่โรงเรียน',description:'งานเกษียณที่โรงเรียน',event_type:'activity',start_at:'2026-09-25T02:00:00.000Z',end_at:null,all_day:false,timezone:'Asia/Bangkok',location:'โรงเรียน',status:'planned',priority:'normal',updated_at:'2026-09-01T08:39:51.000Z'}
+     ]);
+     if(url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/conversation_summaries?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/memory_nodes?')||url.includes('/rest/v1/devices?'))return json([]);
+     throw new Error('unexpected '+url);
+   });
+   const recentContext=[{role:'user',text:'จัดงานเกษียณวันไหน'},{role:'ceo',text:'มี 2 งานครับ'}];
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'วันไหนบ้าง',conversationId:'mobile:retire',recentContext})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.intent).toBe('recall');expect(payload.data.mode).toBe('knowledge');expect(payload.data.context.query).toBe('จัดงานเกษียณวันไหน');expect(payload.data.answer).toContain('18 กันยายน 2569');expect(payload.data.answer).toContain('25 กันยายน 2569');
    expect(calls.some(x=>x.includes('/rest/v1/runtime_jobs'))).toBe(false);
  });
 });
