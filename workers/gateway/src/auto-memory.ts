@@ -1,5 +1,6 @@
 import { sha256Hex } from './security';
 import { rest, rpc, type Env } from './supabase';
+import { isQuestionLike } from './chat-intelligence';
 
 export type AutoMemoryKind = 'memory' | 'event' | 'task' | 'contact' | 'project_knowledge' | 'ignore';
 export type AutoMemoryRetention = 'permanent' | 'consolidation' | 'daily_log' | 'none';
@@ -206,7 +207,7 @@ function contactFields(text: string) {
 }
 
 function heuristicKind(text: string, eventAt: string | null, explicit: boolean): { kind: AutoMemoryKind; confidence: number } {
-  const question = /[?？]\s*$/.test(text) || /^(?:อะไร|ทำไม|ยังไง|อย่างไร|เท่าไร|กี่|who|what|why|how|when|where)\b/i.test(text) || /(?:อะไร|ใคร|ที่ไหน|เมื่อไร|ยังไง|อย่างไร|เท่าไร|กี่|what|who|where|when|how)\s*$/i.test(text);
+  const question = isQuestionLike(text);
   const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|appointment|meeting|schedule/i.test(text);
   const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|todo|task|deadline/i.test(text);
   const projectCue = /โปรเจกต์|โครงการ|ระบบ|workspace|repository|repo|architecture|roadmap|version|เวอร์ชัน|ตัดสินใจ|เลือกใช้|กำหนดให้/i.test(text);

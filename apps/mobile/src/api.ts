@@ -28,7 +28,7 @@ export const api = {
   me: () => request<{ id: string; email: string; metadata?: Record<string, unknown> }>('/api/me'),
   today: () => request<{ events: EventRecord[]; tasks: TaskRecord[]; reminders: any[]; range: { from: string; to: string } }>('/api/today'),
   chat: (message: string, conversationId = '') => request<any>('/api/chat', { method: 'POST', body: JSON.stringify({ message, conversationId }) }),
-  memories: (q = '') => request<{ memories: MemoryRecord[] }>(`/api/memories${q ? `?q=${encodeURIComponent(q)}` : ''}`),
+  memories: (q = '', offset = 0, limit = 30, filter = '') => request<{ memories: Array<MemoryRecord & { repeat_count?: number; event_at?: string|null; tier?: string; retention_policy?: string; source_kind?: string }>; hasMore:boolean; nextOffset:number|null; hiddenQuestionCount:number; consolidatedCount:number }>(`/api/memories?limit=${Math.max(1,Math.min(60,limit))}&offset=${Math.max(0,offset)}${q?`&q=${encodeURIComponent(q)}`:''}${filter?`&filter=${encodeURIComponent(filter)}`:''}`),
   remember: (content: string, title = '') => request<MemoryRecord>('/api/memories', { method: 'POST', body: JSON.stringify({ title, content, memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile'] }) }),
   forget: (id: string) => request<MemoryRecord | null>(`/api/memories/${id}/forget`, { method: 'POST', body: '{}' }),
   claims: (projectId = '') => request<{ claims: ClaimRecord[] }>(`/api/claims${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),

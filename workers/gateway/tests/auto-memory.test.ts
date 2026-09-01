@@ -52,6 +52,11 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
     expect(d.retention).toBe('none');
   });
 
+  it('never stores Thai calendar questions as memory candidates',()=>{
+    const d=classifyAutoMemoryHeuristic({message:'วันที่ 18 มีอะไรไหม',source:'mobile'},now);
+    expect(d.kind).toBe('ignore');
+    expect(d.retention).toBe('none');
+  });
   it('keeps daily-life statements as episodic archive candidates but ignores recall questions',()=>{
     const fact=classifyAutoMemoryHeuristic({message:'เมื่อวานกินข้าวกับแกงไก่ที่บ้าน',source:'chatgpt'},now);
     expect(fact.kind).toBe('memory');

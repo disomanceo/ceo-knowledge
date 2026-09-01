@@ -75,4 +75,23 @@ describe('Memory OS M3 Worker API',()=>{
     expect(calls.some(call=>call.url.endsWith('/rpc/memory_conflict_resolve'))).toBe(true);
     expect(calls.some(call=>call.url.endsWith('/rpc/memory_provenance_get'))).toBe(true);
   });
-});
+
+  it('hides question-shaped memories and consolidates exact duplicates',async()=>{
+    vi.stubGlobal('fetch',async(input:any,init:any={})=>{
+      const url=String(input),method=String(init.method||'GET').toUpperCase();
+      if(url.endsWith('/auth/v1/user'))return json({id:'user-1'});
+      if(url.includes('/rest/v1/memories?')&&method==='GET')return json([
+        {id:'33333333-3333-3333-3333-333333333333',title:'อาหารกลางวัน',content:'วันนี้กินข้าวมันไก่',memory_type:'fact',importance:2,scope:'global',status:'active',tags:[],created_at:'2026-09-01T03:00:00Z',updated_at:'2026-09-01T03:00:00Z'},
+        {id:'44444444-4444-4444-4444-444444444444',title:'อาหารกลางวันซ้ำ',content:'วันนี้กินข้าวมันไก่',memory_type:'fact',importance:2,scope:'global',status:'active',tags:[],created_at:'2026-09-01T03:01:00Z',updated_at:'2026-09-01T03:01:00Z'},
+        {id:'55555555-5555-5555-5555-555555555555',title:'วันที่ 18 มีอะไรไหม',content:'Memory: วันที่ 18 มีอะไรไหม',memory_type:'context',importance:1,scope:'global',status:'active',tags:[],created_at:'2026-09-01T03:02:00Z',updated_at:'2026-09-01T03:02:00Z'},
+      ]);
+      if(url.includes('/rest/v1/memory_nodes?')&&method==='GET')return json([]);
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const response=await handleApi(new Request('https://ceo.test/api/memories?limit=30',{headers:authHeaders}),env);
+    const payload:any=await response.json();
+    expect(payload.data.memories).toHaveLength(1);
+    expect(payload.data.memories[0].content).toBe('วันนี้กินข้าวมันไก่');
+    expect(payload.data.memories[0].repeat_count).toBe(2);
+    expect(payload.data.hiddenQuestionCount).toBe(1);
+  });});

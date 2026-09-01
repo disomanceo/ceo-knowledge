@@ -2,6 +2,7 @@ import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type K
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback, recallSearchQuery } from './chat';
+import { composeDateAnswer, composeTaskAnswer, detectChatIntent, isQuestionLike, memoryLooksLikeQuestion, type DateIntent } from './chat-intelligence';
 import { enqueueOllamaChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
@@ -63,6 +64,16 @@ async function listToday(env: Env, token: string, url: URL) {
   };
 }
 
+async function dateKnowledge(env: Env, token: string, intent: DateIntent) {
+  const [events,tasks,memories]=await Promise.all([
+    rest<EventRecord[]>(env,token,`events${qs({select:'*',start_at:`gte.${intent.from}`,order:'start_at.asc',limit:50})}`).then(rows=>rows.filter(row=>Date.parse(row.start_at)<=Date.parse(intent.to)&&row.status!=='cancelled')).catch(()=>[]),
+    rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',due_at:`gte.${intent.from}`,order:'due_at.asc.nullslast,updated_at.desc',limit:50})}`).then(rows=>rows.filter(row=>!row.due_at||Date.parse(row.due_at)<=Date.parse(intent.to))).catch(()=>[]),
+    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,reference_path,updated_at',node_type:'eq.memory',event_at:`gte.${intent.from}`,order:'event_at.asc',limit:50})}`).then(rows=>rows.filter(row=>row.event_at&&Date.parse(row.event_at)<=Date.parse(intent.to)&&!memoryLooksLikeQuestion(row))).catch(()=>[]),
+  ]);
+  const seen=new Set<string>();
+  const uniq=(rows:any[])=>rows.filter(row=>{const key=clean(row.title||row.content||row.id||row.node_id,500).toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true});
+  return {events:uniq(events),tasks:uniq(tasks),memories:uniq(memories)};
+}
 async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
@@ -82,9 +93,9 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   const replicaOr = recallQ ? searchOr(['title','content'], recallQ) : '';
   const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
   const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
-  const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')));
+  const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')) && !(row.kind === 'memories' && memoryLooksLikeQuestion(row)));
   rows.length = 0;
-  rows.push(...legacyOnly, ...replicaRows.map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
+  rows.push(...legacyOnly, ...replicaRows.filter(row => !memoryLooksLikeQuestion(row)).map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
   const tokens = recallQ.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const ranked = rows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
@@ -211,18 +222,25 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     }
 
     if (url.pathname === '/api/memories' && request.method === 'GET') {
-      const query = clean(url.searchParams.get('q'), 240), limit = safeLimit(url.searchParams.get('limit'), 30, 100);
+      const query = clean(url.searchParams.get('q'), 240), limit = safeLimit(url.searchParams.get('limit'), 30, 60), offset = Math.max(0,Math.min(5000,Number(url.searchParams.get('offset')||0)||0));
+      const filter = clean(url.searchParams.get('filter'),30), fetchLimit=Math.min(250,offset+limit+30);
       const or = query ? searchOr(['title', 'content'], query) : '';
       const [legacy, replicas] = await Promise.all([
-        rest<MemoryRecord[]>(env, token, `memories${qs({ select: '*', status: 'eq.active', ...(or ? { or } : {}), order: 'importance.desc,updated_at.desc', limit })}`),
-        rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,revision,created_at,updated_at', node_type:'eq.memory', ...(or ? { or } : {}), order:'updated_at.desc', limit })}`).catch(() => []),
+        rest<MemoryRecord[]>(env, token, `memories${qs({ select: '*', status: 'eq.active', ...(or ? { or } : {}), order: 'updated_at.desc', limit:fetchLimit })}`),
+        rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,revision,event_at,tier,retention_policy,source_kind,metadata,created_at,updated_at', node_type:'eq.memory', ...(or ? { or } : {}), order:'updated_at.desc', limit:fetchLimit })}`).catch(() => []),
       ]);
       const mirrored = new Set(replicas.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
-      const memories = [...replicas.map(memoryReplicaAsRecord), ...legacy.filter(row => !mirrored.has(row.id))]
-        .sort((x,y)=>String(y.updated_at||'').localeCompare(String(x.updated_at||''))).slice(0,limit);
-      return ok({ memories, replicaCount:replicas.length });
-    }
-    if (url.pathname === '/api/memories' && request.method === 'POST') return ok(await saveMemory(env, token, await jsonBody<any>(request)), 201);
+      const combined:any[]=[...replicas.map(row=>({...memoryReplicaAsRecord(row),event_at:row.event_at||null,tier:row.tier||'hot',retention_policy:row.retention_policy||'standard',source_kind:row.source_kind||'',metadata:row.metadata||{}})), ...legacy.filter(row => !mirrored.has(row.id))];
+      const hiddenQuestionCount=combined.filter(memoryLooksLikeQuestion).length;
+      const raw:any[]=combined.filter(row=>!memoryLooksLikeQuestion(row))
+        .filter(row=>filter==='important'?Number(row.importance)>=2:filter==='today'?Date.parse(row.updated_at)>=Date.parse(bangkokDayRange().from):true)
+        .sort((x,y)=>String(y.updated_at||'').localeCompare(String(x.updated_at||'')));
+      const groups=new Map<string,any>();
+      for(const row of raw){const key=clean(row.content||row.title,2000).toLocaleLowerCase().replace(/^(?:memory|note)\s*:\s*/i,'').replace(/[\s\p{P}]+/gu,' ').trim();if(!key)continue;const existing=groups.get(key);if(existing){existing.repeat_count=(existing.repeat_count||1)+1;if(String(row.updated_at)>String(existing.updated_at))Object.assign(existing,{...row,repeat_count:existing.repeat_count})}else groups.set(key,{...row,repeat_count:1})}
+      const consolidated=[...groups.values()];
+      const memories=consolidated.slice(offset,offset+limit),hasMore=consolidated.length>offset+limit||legacy.length===fetchLimit||replicas.length===fetchLimit;
+      return ok({ memories, replicaCount:replicas.length, hiddenQuestionCount, offset, nextOffset:hasMore?offset+memories.length:null, hasMore, consolidatedCount:consolidated.length });
+    }    if (url.pathname === '/api/memories' && request.method === 'POST') return ok(await saveMemory(env, token, await jsonBody<any>(request)), 201);
     const forgetMatch = url.pathname.match(/^\/api\/memories\/([0-9a-f-]{36})\/forget$/i);
     if (forgetMatch && request.method === 'POST') {
       const rows = await rest<MemoryRecord[]>(env, token, `memories${qs({ id: `eq.${forgetMatch[1]}`, select: '*' })}`, { method: 'PATCH', body: { status: 'forgotten' }, prefer: 'return=representation' });
@@ -333,40 +351,46 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/chat' && request.method === 'POST') {
       const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[] }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
+      const intent = detectChatIntent(message);
+      const question = isQuestionLike(message);
       let autoMemory: any = null;
-      try {
-        autoMemory = await autoCapture(env, token, { message, conversationId: body.conversationId, projectId: body.projectId, sourceRef: body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
-        if (autoMemory?.decision?.explicit) {
-          if (autoMemory?.decision?.blocked) return ok({ intent: 'remember', answer: 'ไม่บันทึกข้อมูลนี้ เพราะตรวจพบข้อมูลลับหรือข้อมูลอ่อนไหว', memory: null, autoMemory });
-          if (autoMemory?.written) return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้ว', memory: autoMemory.written.record || null, autoMemory });
+      if (!question) {
+        try {
+          autoMemory = await autoCapture(env, token, { message, conversationId: body.conversationId, projectId: body.projectId, sourceRef: body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
+          if (autoMemory?.decision?.explicit) {
+            if (autoMemory?.decision?.blocked) return ok({ intent: 'remember', answer: 'ไม่บันทึกข้อความนี้ เพราะตรวจพบข้อมูลลับหรือข้อมูลอ่อนไหว', memory: null, autoMemory });
+            if (autoMemory?.written) return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้วครับ', memory: autoMemory.written.record || null, autoMemory });
+          }
+        } catch (error: any) {
+          autoMemory = { ok: false, error: clean(error?.message || error || 'AUTO_MEMORY_FAILED', 300) };
         }
-      } catch (error: any) {
-        autoMemory = { ok: false, error: clean(error?.message || error || 'AUTO_MEMORY_FAILED', 300) };
       }
-      const rememberMatch = message.match(/^(?:เธเธณเนเธงเน(?:เธงเนเธฒ)?|เธเธณเธงเนเธฒ|remember\s*:?)\s*(.+)$/i);
+      const rememberMatch = message.match(/^(?:จำไว้(?:ว่า)?|จำว่า|remember\s*:?)\s*(.+)$/i);
       if (rememberMatch?.[1]) {
-        const memory = await saveMemory(env, token, { title: 'เธเธฒเธ Ceo Mobile Chat', content: rememberMatch[1], memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile-chat'] });
-        return ok({ intent: 'remember', answer: 'เธเธณเนเธงเนเนเธ Ceo Knowledge เนเธฅเนเธง', memory });
+        const memory = await saveMemory(env, token, { title: 'จาก Ceo Mobile Chat', content: rememberMatch[1], memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile-chat'] });
+        return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้วครับ', memory, autoMemory });
       }
-      if (/(เธงเธฑเธเธเธตเน|today|เธเธฑเธ”|เธ•เธฒเธฃเธฒเธ|schedule)/i.test(message)) {
+      if (intent.kind === 'date') {
+        const date = await dateKnowledge(env, token, intent);
+        return ok({ intent:'date', answer:composeDateAnswer(intent,date), date, range:{from:intent.from,to:intent.to,label:intent.label}, autoMemory:null, mode:'knowledge', provider:'knowledge' });
+      }
+      if (intent.kind === 'today') {
         const today = await listToday(env, token, url);
-        const answer = `เธงเธฑเธเธเธตเนเธกเธต ${today.events.length} เธเธฑเธ”/เธเธดเธเธเธฃเธฃเธก เนเธฅเธฐเธกเธตเธเธฒเธเธ—เธตเนเธขเธฑเธเน€เธเธดเธ”เธญเธขเธนเน ${today.tasks.length} เธเธฒเธ`;
-        return ok({ intent: 'today', answer, today });
+        const answer = `วันนี้มี ${today.events.length} นัด/กิจกรรม และมีงานที่ยังเปิดอยู่ ${today.tasks.length} งานครับ`;
+        return ok({ intent: 'today', answer, today, autoMemory, mode:'knowledge', provider:'knowledge' });
       }
-      if (/(เธเธฒเธเธเนเธฒเธ|เธเธฒเธเธ—เธตเนเธ•เนเธญเธเธ—เธณ|tasks?|todo)/i.test(message)) {
+      if (intent.kind === 'tasks') {
         const tasks = await rest<TaskRecord[]>(env, token, `tasks${qs({ select: '*', status: 'in.(open,in_progress,waiting,overdue)', order: 'due_at.asc.nullslast,updated_at.desc', limit: 30 })}`);
-        const answer = tasks.length ? `เธกเธตเธเธฒเธเธ—เธตเนเธขเธฑเธเนเธกเนเน€เธชเธฃเนเธ ${tasks.length} เธเธฒเธ: ${tasks.slice(0, 5).map(task => task.title).join(', ')}` : 'เธ•เธญเธเธเธตเนเนเธกเนเธกเธตเธเธฒเธเธเนเธฒเธเนเธ Ceo Knowledge';
-        return ok({ intent: 'tasks', answer, tasks });
+        return ok({ intent: 'tasks', answer:composeTaskAnswer(tasks), tasks, autoMemory, mode:'knowledge', provider:'knowledge' });
       }
-      const search = await searchKnowledge(env, token, message, 10);
+      const search = await searchKnowledge(env, token, message, 8);
       const fallbackAnswer = cloudChatFallback(message, search.results);
       const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);
-      if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'เธเธณเธฅเธฑเธเธชเนเธเธเธณเธ–เธฒเธกเนเธซเน Ollama เธเธเน€เธเธฃเธทเนเธญเธ Ceoโ€ฆ', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device }, 202);
+      if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device, autoMemory });
       const llm = await maybeLlm(env, message, search.results);
       const mode = llm ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
-      return ok({ intent: 'recall', answer: llm || fallbackAnswer, search, ai: Boolean(llm), aiConfigured: Boolean(env.LLM_API_KEY), mode, provider: llm ? 'cloud-ai' : 'knowledge' });
+      return ok({ intent: intent.kind, answer: llm || fallbackAnswer, search, ai: Boolean(llm), aiConfigured: Boolean(env.LLM_API_KEY), mode, provider: llm ? 'cloud-ai' : 'knowledge', autoMemory });
     }
-
     if (url.pathname === '/api/drive/config' && request.method === 'GET') return ok(await ceoDriveConfig(env));
     if (url.pathname === '/api/drive/status' && request.method === 'GET') return ok(await ceoDriveStatus(driveProviderToken(request)));
     if (url.pathname === '/api/drive/files' && request.method === 'GET') return ok(await ceoDriveFiles(driveProviderToken(request), { q: clean(url.searchParams.get('q'), 200), folderId: clean(url.searchParams.get('folderId'), 200), pageToken: clean(url.searchParams.get('pageToken'), 1000), pageSize: safeLimit(url.searchParams.get('limit'), 40, 100) }));

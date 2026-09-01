@@ -59,3 +59,5 @@ body { min-width:320px; }
 .oauth-client { border:1px solid rgba(244,201,93,.28); background:rgba(244,201,93,.06); border-radius:14px; padding:13px 14px; }
 .oauth-scope { display:flex; align-items:flex-start; gap:10px; border:1px solid #2b3140; background:#0f1219; border-radius:13px; padding:10px 12px; }
 .oauth-scope svg { flex:0 0 auto; color:#f4c95d; margin-top:2px; }
+
+.memory-filter-row{display:flex;gap:7px;overflow-x:auto;scrollbar-width:none}.memory-filter-row::-webkit-scrollbar{display:none}.memory-day-summary{margin:10px 0;padding:9px 11px;border:1px solid #29303e;border-radius:11px;background:#0e1219;color:#8f9aae;font-size:11px}.memory-row{padding:12px;border:1px solid #252c39;border-radius:12px;background:#0d1016}.memory-row+.memory-row{margin-top:8px}
