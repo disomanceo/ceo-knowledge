@@ -1,11 +1,12 @@
 import { describe,expect,it } from 'vitest';
-import { composeDateAnswer,composeTemporalAnswer,dateTextMatchesIntent,detectChatIntent,extractTemporalTopic,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent,parseTemporalIntent,temporalTextMatchesIntent } from '../src/chat-intelligence';
+import { composeDateAnswer,composeTemporalAnswer,dateTextMatchesIntent,detectChatIntent,extractTemporalTopic,isLiveExternalQuery,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent,parseTemporalIntent,temporalTextMatchesIntent } from '../src/chat-intelligence';
 const now=new Date('2026-09-01T04:40:00.000Z');
 describe('chat intelligence',()=>{
  it('recognizes Thai question without question mark',()=>{expect(isQuestionLike('วันที่ 18 มีอะไรไหม')).toBe(true);expect(isQuestionLike('ดูภาพยนต์วันไหน')).toBe(true);expect(memoryLooksLikeQuestion({content:'Memory: วันที่ 18 มีอะไรไหม'})).toBe(true)});
  it('resolves day-only date to current/upcoming Bangkok month',()=>{const x=parseDateIntent('วันที่ 18 มีอะไรไหม',now)!;expect(x.from).toBe('2026-09-17T17:00:00.000Z');expect(x.to).toBe('2026-09-18T16:59:59.999Z')});
  it('resolves explicit Thai Buddhist date',()=>{const x=parseDateIntent('18 ก.ย. 2569 มีอะไร',now)!;expect(x.year).toBe(2026);expect(x.month).toBe(9);expect(x.day).toBe(18)});
  it('routes date before generic recall',()=>{expect(detectChatIntent('วันที่ 18 มีอะไรไหม',now).kind).toBe('date');expect(detectChatIntent('งานค้างมีอะไรบ้าง',now).kind).toBe('tasks')});
+ it('routes current market questions to LIVE before calendar parsing',()=>{expect(isLiveExternalQuery('หุ้นวันนี้ตัวไหนน่าสนใจ')).toBe(true);expect(detectChatIntent('หุ้นวันนี้ตัวไหนน่าสนใจ',now).kind).toBe('live');expect(detectChatIntent('วันนี้มีงานอะไรบ้าง',now).kind).not.toBe('live')});
  it('does not treat ordinary numbers as calendar dates',()=>{expect(detectChatIntent('โปรเจกต์ 2 มีอะไรไหม',now).kind).toBe('recall')});
  it('routes a bare leading day question as a date',()=>{const x=detectChatIntent('17 มีอะไรไหม',now);expect(x.kind).toBe('date');if(x.kind==='date'){expect(x.day).toBe(17);expect(x.month).toBe(9)}});
  it('matches exact Thai dates embedded in memory text',()=>{const i=parseDateIntent('17 ก.ย. มีอะไร',now)!;expect(dateTextMatchesIntent('วันที่ 17 กันยายน 2569 ต้องส่งเล่ม PA ให้สำนักงานเขต',i)).toBe(true);expect(dateTextMatchesIntent('วันที่ 18 กันยายน 2569 มีงานเลี้ยง',i)).toBe(false)});
@@ -123,5 +124,17 @@ describe('topic recall across structured secretary data',()=>{
    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'วันไหนบ้าง',conversationId:'mobile:retire',recentContext})}),apiEnv),payload:any=await response.json();
    expect(payload.data.intent).toBe('recall');expect(payload.data.mode).toBe('knowledge');expect(payload.data.context.query).toBe('จัดงานเกษียณวันไหน');expect(payload.data.answer).toContain('18 กันยายน 2569');expect(payload.data.answer).toContain('25 กันยายน 2569');
    expect(calls.some(x=>x.includes('/rest/v1/runtime_jobs'))).toBe(false);
+ });
+ it('routes หุ้นวันนี้ to live grounded provider instead of Today calendar or Ollama',async()=>{
+   const calls:any[]=[];vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=String(input),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url:decodeURIComponent(url),method,body});
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/devices?'))return json([{id:'dev1',device_name:'Ceo PC',runtime_id:'r1',status:'online',trusted:true,last_seen_at:new Date().toISOString(),capabilities:{remoteTools:['provider.chat']}}]);
+     if(url.includes('/rest/v1/runtime_jobs')&&method==='POST')return json([{id:'job-live',...body}],201);
+     throw new Error('unexpected '+method+' '+url);
+   });
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'หุ้นวันนี้ตัวไหนน่าสนใจ'})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.intent).toBe('live');expect(payload.data.mode).toBe('runtime-provider-pending');expect(payload.data.live).toBe(true);expect(payload.data.answer).toContain('ค้นข้อมูลล่าสุด');
+   const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.tool).toBe('provider.chat');expect(job.body.arguments.live).toBe(true);expect(job.body.arguments.strategy).toBe('cloud-first');expect(job.body.arguments.task).toBe('reasoning');
+   expect(calls.some(x=>x.url.includes('/rest/v1/events?'))).toBe(false);expect(calls.some(x=>x.body?.tool==='ollama.chat')).toBe(false);
  });
 });

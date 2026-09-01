@@ -1,9 +1,9 @@
-export type ChatIntentKind='date'|'temporal'|'today'|'tasks'|'recall'|'general';
+export type ChatIntentKind='live'|'date'|'temporal'|'today'|'tasks'|'recall'|'general';
 export type TemporalGranularity='day'|'week'|'month'|'year'|'range';
 export interface DateIntent{kind:'date';from:string;to:string;label:string;granularity:'day';day:number;month:number;year:number}
 export interface TemporalIntent{kind:'temporal';from:string;to:string;label:string;granularity:Exclude<TemporalGranularity,'day'>;year?:number;month?:number;topic:string}
 export type TimeIntent=DateIntent|TemporalIntent;
-export type ChatIntent=TimeIntent|{kind:'today'|'tasks'|'recall'|'general'};
+export type ChatIntent=TimeIntent|{kind:'live'|'today'|'tasks'|'recall'|'general'};
 
 const THAI_MONTHS:Record<string,number>={
   มกราคม:1,มค:1,'ม.ค':1,กุมภาพันธ์:2,กพ:2,'ก.พ':2,มีนาคม:3,มีค:3,'มี.ค':3,
@@ -127,8 +127,16 @@ export function temporalTextMatchesIntent(input:string,intent:TimeIntent){
   return explicitDatesFromText(input).some(x=>{const y=Number.isNaN(x.year)?bp.year:x.year;const d=localStartUtc(y,x.month,x.day).getTime();return d>=from&&d<=to});
 }
 
+export function isLiveExternalQuery(input:string):boolean{
+  const t=clean(input).toLocaleLowerCase();
+  const domain=/(?:หุ้น|stock|set(?:50|100)?\b|ดัชนี|ตลาดหุ้น|ทอง|gold|ค่าเงิน|exchange rate|forex|คริปโต|crypto|bitcoin|btc|ethereum|eth|ราคาน้ำมัน|น้ำมัน|oil|ข่าว|news)/i.test(t);
+  const freshness=/(?:วันนี้|ตอนนี้|ล่าสุด|ปัจจุบัน|ขณะนี้|วันนี้ตัวไหน|น่าสนใจ|ราคา(?:ตอนนี้|วันนี้)?|today|current|latest|right now|live)/i.test(t);
+  return domain&&freshness;
+}
+
 export function detectChatIntent(input:string,now=new Date()):ChatIntent{
-  const t=clean(input),date=parseDateIntent(t,now);if(date&&(isQuestionLike(t)||/(?:มีงาน|มีนัด|ตาราง|นัด|กิจกรรม|schedule|what.*on)/i.test(t)))return date;
+  const t=clean(input);if(isLiveExternalQuery(t))return{kind:'live'};
+  const date=parseDateIntent(t,now);if(date&&(isQuestionLike(t)||/(?:มีงาน|มีนัด|ตาราง|นัด|กิจกรรม|schedule|what.*on)/i.test(t)))return date;
   const temporal=parseTemporalIntent(t,now);if(temporal&&(isQuestionLike(t)||/(?:มีงาน|มีนัด|ตาราง|กิจกรรม|สรุป|อะไรบ้าง|schedule)/i.test(t)))return temporal;
   if(/(?:งานค้าง|งานที่ต้องทำ|ต้องทำอะไร|tasks?|todo)/i.test(t))return{kind:'tasks'};
   if(/(?:วันนี้|today|นัดวันนี้|ตารางวันนี้)/i.test(t))return{kind:'today'};
