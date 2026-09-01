@@ -226,7 +226,7 @@ async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<str
 export async function handleApi(request: Request, env: Env): Promise<Response> {
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: env.LLM_API_KEY ? 'auto-runtime-cloud-ai' : 'auto-runtime-knowledge', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: env.LLM_API_KEY ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
