@@ -6,8 +6,8 @@ import './graph.css';
 
 const WORLD_W=1600, WORLD_H=1080, MIN_VIEW_W=230, MAX_VIEW_W=2200;
 const short=(value:string,max=26)=>value.length>max?value.slice(0,max-1)+'…':value;
-const typeName=(value:string)=>({memory:'Memory',event:'Event',task:'Task',person:'Person',decision:'Decision',project:'Project',conversation:'Conversation',topic:'Topic',source:'Source',knowledge:'Knowledge',claim:'Claim',summary:'Summary'} as Record<string,string>)[value]||value||'Knowledge';
-const TYPE_FILTERS=['all','memory','event','task','person','decision','project','conversation','knowledge'] as const;
+const typeName=(value:string)=>({memory:'Memory',event:'Event',task:'Task',person:'Person',place:'Place',decision:'Decision',project:'Project',conversation:'Conversation',topic:'Topic',source:'Source',knowledge:'Knowledge',claim:'Claim',summary:'Summary'} as Record<string,string>)[value]||value||'Knowledge';
+const TYPE_FILTERS=['all','memory','event','task','person','place','decision','project','conversation','knowledge'] as const;
 type FilterType=typeof TYPE_FILTERS[number];
 type ViewBox={x:number;y:number;w:number;h:number};
 type LayoutNode=KnowledgeGraphNode&{x:number;y:number;degree:number;component:number};
@@ -21,19 +21,20 @@ function boundedView(next:ViewBox):ViewBox{
   return{x,y,w,h};
 }
 
-function searchGraph(graph:KnowledgeGraph,query:string,type:FilterType,focusId:string):KnowledgeGraph{
+function searchGraph(graph:KnowledgeGraph,query:string,type:FilterType,focusId:string,depthLimit=2):KnowledgeGraph{
   const q=query.trim().toLocaleLowerCase();
   const typeMatches=(node:KnowledgeGraphNode)=>type==='all'||String(node.node_type||node.knowledge_type).toLocaleLowerCase()===type;
   let direct=new Set(graph.nodes.filter(node=>typeMatches(node)&&(!q||[node.title,node.summary,node.content,node.topic,node.node_type,node.knowledge_type,node.project_ref,node.source_kind,...(node.tags||[])].join(' ').toLocaleLowerCase().includes(q))).map(node=>node.id));
   if(focusId)direct=new Set([focusId]);
   if(!direct.size)return {nodes:[],links:[]};
-  const visible=new Set(direct);
-  for(const link of graph.links)if(direct.has(link.from_knowledge_id)||direct.has(link.to_knowledge_id)){visible.add(link.from_knowledge_id);visible.add(link.to_knowledge_id)}
-  const nodes=graph.nodes.filter(node=>visible.has(node.id)&&(type==='all'||focusId?true:typeMatches(node)||!direct.has(node.id)));
+  const adjacency=new Map<string,Set<string>>();
+  for(const link of graph.links){const a=adjacency.get(link.from_knowledge_id)||new Set<string>(),b=adjacency.get(link.to_knowledge_id)||new Set<string>();a.add(link.to_knowledge_id);b.add(link.from_knowledge_id);adjacency.set(link.from_knowledge_id,a);adjacency.set(link.to_knowledge_id,b)}
+  const visible=new Set(direct),depth=focusId||q?clamp(Math.round(depthLimit),1,3):1;let frontier=[...direct];
+  for(let hop=0;hop<depth;hop++){const next:string[]=[];for(const id of frontier)for(const other of adjacency.get(id)||[]){if(visible.has(other))continue;visible.add(other);next.push(other)}frontier=next;if(!frontier.length)break}
+  const nodes=graph.nodes.filter(node=>visible.has(node.id));
   const ids=new Set(nodes.map(node=>node.id));
   return {nodes,links:graph.links.filter(link=>ids.has(link.from_knowledge_id)&&ids.has(link.to_knowledge_id))};
 }
-
 function neuralMeshLayout(graph:KnowledgeGraph):LayoutNode[]{
   const ids=graph.nodes.map(n=>n.id), index=new Map(ids.map((id,i)=>[id,i]));
   const adjacency=ids.map(()=>[] as number[]), degree=new Array(ids.length).fill(0);
@@ -93,13 +94,13 @@ function edgePath(a:LayoutNode,b:LayoutNode,id:string){const dx=b.x-a.x,dy=b.y-a
 
 export default function GraphPage(){
   const[graph,setGraph]=useState<KnowledgeGraph>({nodes:[],links:[]});
-  const[selectedId,setSelectedId]=useState('');const[query,setQuery]=useState('');const[type,setType]=useState<FilterType>('all');const[focusId,setFocusId]=useState('');
+  const[selectedId,setSelectedId]=useState('');const[query,setQuery]=useState('');const[type,setType]=useState<FilterType>('all');const[focusId,setFocusId]=useState('');const[graphDepth,setGraphDepth]=useState<1|2|3>(2);
   const[mode,setMode]=useState<'graph'|'list'>('graph');const[busy,setBusy]=useState(false);const[error,setError]=useState('');
   const[view,setView]=useState<ViewBox>({x:0,y:0,w:WORLD_W,h:WORLD_H});const baseView=useRef<ViewBox>({x:0,y:0,w:WORLD_W,h:WORLD_H});
   const drag=useRef<{pointerId:number;cx:number;cy:number;scaleX:number;scaleY:number;view:ViewBox}|null>(null);
   const load=async()=>{setBusy(true);setError('');try{const data=await loadKnowledgeGraph();setGraph(data);setSelectedId(current=>data.nodes.some(node=>node.id===current)?current:(data.nodes[0]?.id||''));}catch(e:any){setError(String(e?.message||e))}finally{setBusy(false)}};
   useEffect(()=>{void load()},[]);
-  const visible=useMemo(()=>searchGraph(graph,query,type,focusId),[graph,query,type,focusId]);
+  const visible=useMemo(()=>searchGraph(graph,query,type,focusId,graphDepth),[graph,query,type,focusId,graphDepth]);
   const layout=useMemo(()=>neuralMeshLayout(visible),[visible]);const positions=useMemo(()=>new Map(layout.map(node=>[node.id,node])),[layout]);
   useEffect(()=>{const fitted=fitView(layout);baseView.current=fitted;if(focusId){const n=layout.find(node=>node.id===focusId);if(n){const w=520,h=w*(WORLD_H/WORLD_W);setView(boundedView({x:n.x-w/2,y:n.y-h/2,w,h}));return}}setView(boundedView(fitted))},[layout,focusId]);
   const selected=graph.nodes.find(node=>node.id===selectedId)||visible.nodes[0]||null;
@@ -117,7 +118,7 @@ export default function GraphPage(){
     {error&&<div className="text-sm text-red-300 bg-red-950/30 border border-red-900/50 rounded-xl p-3">{error}</div>}
     <div className="flex gap-2"><div className="relative flex-1"><Search className="absolute left-3 top-3.5 muted" size={18}/><input className="input pl-10" value={query} onChange={e=>{setQuery(e.target.value);setFocusId('')}} placeholder="ค้นเรื่อง / คน / โปรเจกต์ / source"/></div><button className="btn px-3" onClick={()=>setMode(mode==='graph'?'list':'graph')} title={mode==='graph'?'ดูแบบรายการ':'ดูแบบกราฟ'}>{mode==='graph'?<List size={18}/>:<Network size={18}/>}</button></div>
     <div className="graph-filter-row">{TYPE_FILTERS.map(value=><button key={value} onClick={()=>{setType(value);setFocusId('')}} className={'graph-filter '+(type===value?'graph-filter-active':'')}>{value==='all'?'ทั้งหมด':typeName(value)}{value!=='all'&&counts[value]?<span>{counts[value]}</span>:null}</button>)}</div>
-    <div className="flex gap-2 flex-wrap"><span className="badge">Nodes {visible.nodes.length}</span><span className="badge">Links {visible.links.length}</span>{focusId&&<button className="badge accent" onClick={()=>setFocusId('')}>ออกจาก Focus</button>}</div>
+    <div className="flex gap-2 flex-wrap items-center"><span className="badge">Nodes {visible.nodes.length}</span><span className="badge">Links {visible.links.length}</span><span className="muted text-[11px]">ความลึก</span>{([1,2,3] as const).map(d=><button key={d} className={'badge '+(graphDepth===d?'accent':'')} onClick={()=>setGraphDepth(d)}>{d} ชั้น</button>)}{focusId&&<button className="badge accent" onClick={()=>setFocusId('')}>ออกจาก Focus</button>}</div>
 
     {mode==='graph'?<section className="card graph-shell graph-neural-shell overflow-hidden relative">
       <div className="graph-toolbar"><button onClick={()=>zoomCenter(.82)} title="Zoom in"><Plus size={16}/></button><button onClick={()=>zoomCenter(1.22)} title="Zoom out"><Minus size={16}/></button><button onClick={resetView} title="Fit view"><RotateCcw size={16}/></button></div>

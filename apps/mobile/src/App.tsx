@@ -15,9 +15,9 @@ import ClaimsPage from './ClaimsPage';
 import ResearchPage from './ResearchPage';
 
 type Tab = 'console' | 'chat' | 'today' | 'memory' | 'tasks' | 'graph' | 'drive' | 'devices' | 'approvals' | 'claims' | 'research';
-type ChatItem = { role: 'user' | 'ceo'; text: string; meta?: string };
+type ChatItem = { role: 'user' | 'ceo'; text: string; meta?: string; at?: number };
 
-async function waitForRuntimeJob(id: string, timeoutMs = 125_000) {
+async function waitForRuntimeJob(id: string, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
     const job = await api.job(id);
@@ -61,66 +61,52 @@ function Login({ onReady }: { onReady: () => void }) {
 }
 
 function ChatPage() {
-  const conversationId=useRef('mobile:'+crypto.randomUUID()).current;
-  const [message, setMessage] = useState('');
-  const [items, setItems] = useState<ChatItem[]>([{ role:'ceo', text:'Ceo Chat พร้อมครับ ถ้าเครื่อง Ceo Online และ Trusted ระบบจะส่งคำถามเข้า Auto Router เพื่อเลือก Gemini / Claude / OpenAI / Ollama ตามความพร้อม แล้วใช้ Ceo Knowledge เป็นบริบท', meta:'AUTO ROUTER' }]);
+  const CHAT_LOG_KEY='ceo-chat-log-v1',CHAT_ID_KEY='ceo-chat-conversation-v1';
+  const greeting:ChatItem={role:'ceo',text:'พร้อมครับ ถามเรื่องงาน นัดหมาย ความจำ หรือคุยต่อจากข้อความก่อนหน้าได้เลย',meta:'AUTO ROUTER',at:Date.now()};
+  const [conversationId,setConversationId]=useState(()=>{try{const saved=localStorage.getItem(CHAT_ID_KEY);if(saved)return saved;const id='mobile:'+crypto.randomUUID();localStorage.setItem(CHAT_ID_KEY,id);return id}catch{return'mobile:'+crypto.randomUUID()}});
+  const [message,setMessage]=useState('');
+  const [items,setItems]=useState<ChatItem[]>(()=>{try{const raw=localStorage.getItem(CHAT_LOG_KEY),parsed=raw?JSON.parse(raw):[];return Array.isArray(parsed)&&parsed.length?parsed.slice(-200):[greeting]}catch{return[greeting]}});
   const [busy,setBusy]=useState(false);
   const [provider,setProvider]=useState('AUTO · READY');
   const [thinking,setThinking]=useState('Ceo กำลังค้นความจำ…');
+  const [followLatest,setFollowLatest]=useState(true);
+  const [newBelow,setNewBelow]=useState(false);
+  const listRef=useRef<HTMLDivElement>(null);
+  useEffect(()=>{try{localStorage.setItem(CHAT_LOG_KEY,JSON.stringify(items.slice(-200)))}catch{}},[items]);
+  useEffect(()=>{if(!followLatest){setNewBelow(true);return}const id=requestAnimationFrame(()=>{const el=listRef.current;if(el)el.scrollTo({top:el.scrollHeight,behavior:'smooth'});setNewBelow(false)});return()=>cancelAnimationFrame(id)},[items,busy,followLatest]);
+  const jumpLatest=()=>{setFollowLatest(true);setNewBelow(false);requestAnimationFrame(()=>{const el=listRef.current;if(el)el.scrollTo({top:el.scrollHeight,behavior:'smooth'})})};
+  const clearLog=()=>{if(!window.confirm('เคลียร์ประวัติแชตในอุปกรณ์นี้?'))return;const id='mobile:'+crypto.randomUUID();setConversationId(id);try{localStorage.setItem(CHAT_ID_KEY,id);localStorage.removeItem(CHAT_LOG_KEY)}catch{}setItems([{...greeting,at:Date.now()}]);setProvider('AUTO · READY');setFollowLatest(true);setNewBelow(false)};
   async function send() {
-    const text=message.trim(); if(!text||busy)return;
-    setMessage(''); setItems(v=>[...v,{role:'user',text}]); setBusy(true); setThinking('Ceo กำลังเลือก Provider…');
+    const text=message.trim();if(!text||busy)return;
+    const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text}));
+    setMessage('');setItems(v=>[...v,{role:'user',text,at:Date.now()}]);setBusy(true);setThinking('Ceo กำลังค้น Knowledge…');setFollowLatest(true);setNewBelow(false);
     try {
-      const r=await api.chat(text,conversationId);
+      const r=await api.chat(text,conversationId,recentContext);
       if(r?.mode==='runtime-provider-pending'&&r?.jobId){
-        const device=String(r.device?.name||'Ceo Runtime');
-        setProvider('AUTO · RUNTIME');
-        setThinking('Ceo Auto Router บน '+device+' กำลังเลือก Model…');
-        const job=await waitForRuntimeJob(String(r.jobId));
-        const result=job?.result&&typeof job.result==='object'?job.result:{};
-        const answer=String(result?.response||'').trim();
-        if(job?.status==='completed'&&result?.available!==false&&answer){
-          const actualProvider=String(result?.provider||'auto').toUpperCase();
-          const actualModel=String(result?.model||'').trim();
-          const routeLabel=[actualProvider,actualModel].filter(Boolean).join(' · ');
-          setProvider('AUTO · '+routeLabel);
-          setItems(v=>[...v,{role:'ceo',text:answer,meta:routeLabel}]);
-        } else {
-          const fallback=String(r.fallbackAnswer||'Ceo Runtime ยังตอบไม่ได้ในรอบนี้ และไม่พบคำตอบสำรองจาก Ceo Knowledge');
-          const reason=String(result?.reason||job?.error?.message||job?.status||'PROVIDER_UNAVAILABLE');
-          setProvider('AUTO · KNOWLEDGE FALLBACK');
-          setItems(v=>[...v,{role:'ceo',text:fallback,meta:'KNOWLEDGE FALLBACK · '+reason}]);
-        }
+        const device=String(r.device?.name||'Ceo Runtime');setProvider('AUTO · RUNTIME');setThinking('Ceo Auto Router บน '+device+' กำลังเลือก Model…');
+        const job=await waitForRuntimeJob(String(r.jobId));const result=job?.result&&typeof job.result==='object'?job.result:{};const answer=String(result?.response||'').trim();
+        if(job?.status==='completed'&&result?.available!==false&&answer){const actualProvider=String(result?.provider||'auto').toUpperCase(),actualModel=String(result?.model||'').trim(),routeLabel=[actualProvider,actualModel].filter(Boolean).join(' · ');setProvider('AUTO · '+routeLabel);setItems(v=>[...v,{role:'ceo',text:answer,meta:routeLabel,at:Date.now()}]);}
+        else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'PROVIDER_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE FALLBACK');setItems(v=>[...v,{role:'ceo',text:fallback,meta:'KNOWLEDGE FALLBACK · '+reason,at:Date.now()}]);}
       } else if(r?.mode==='ollama-pending'&&r?.jobId){
-        const model=String(r.model||'qwen3:4b');
-        const device=String(r.device?.name||'Ceo Runtime');
-        setProvider('AUTO · OLLAMA '+model);
-        setThinking('Ollama '+model+' บน '+device+' กำลังคิด…');
-        const job=await waitForRuntimeJob(String(r.jobId));
-        const result=job?.result&&typeof job.result==='object'?job.result:{};
-        const answer=String(result?.response||'').trim();
-        if(job?.status==='completed'&&result?.available!==false&&answer){
-          const actualModel=String(result?.model||model);
-          setProvider('AUTO · OLLAMA '+actualModel);
-          setItems(v=>[...v,{role:'ceo',text:answer,meta:'OLLAMA · '+actualModel}]);
-        } else {
-          const fallback=String(r.fallbackAnswer||'Ollama ยังตอบไม่ได้ในรอบนี้ และไม่พบคำตอบสำรองจาก Ceo Knowledge');
-          const reason=String(result?.reason||job?.error?.message||job?.status||'OLLAMA_UNAVAILABLE');
-          setProvider('AUTO · KNOWLEDGE FALLBACK');
-          setItems(v=>[...v,{role:'ceo',text:fallback,meta:'KNOWLEDGE FALLBACK · '+reason}]);
-        }
+        const model=String(r.model||'qwen3:4b'),device=String(r.device?.name||'Ceo Runtime');setProvider('AUTO · OLLAMA '+model);setThinking('Ollama '+model+' บน '+device+' กำลังคิด…');
+        const job=await waitForRuntimeJob(String(r.jobId));const result=job?.result&&typeof job.result==='object'?job.result:{};const answer=String(result?.response||'').trim();
+        if(job?.status==='completed'&&result?.available!==false&&answer){const actualModel=String(result?.model||model);setProvider('AUTO · OLLAMA '+actualModel);setItems(v=>[...v,{role:'ceo',text:answer,meta:'OLLAMA · '+actualModel,at:Date.now()}]);}
+        else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'OLLAMA_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE FALLBACK');setItems(v=>[...v,{role:'ceo',text:fallback,meta:'KNOWLEDGE FALLBACK · '+reason,at:Date.now()}]);}
       } else {
-        const mode=String(r?.mode||r?.intent||'knowledge');
-        const label=mode==='cloud-ai'?'CLOUD · AI':mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';
-        setProvider(label);
-        setItems(v=>[...v,{role:'ceo',text:r.answer||'เรียบร้อย',meta:label.replace('AUTO · ','')}]);
+        const mode=String(r?.mode||r?.intent||'knowledge'),label=mode==='cloud-ai'?'CLOUD · AI':mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';setProvider(label);setItems(v=>[...v,{role:'ceo',text:r.answer||'เรียบร้อยครับ',meta:label.replace('AUTO · ',''),at:Date.now()}]);
       }
-    } catch(e:any){
-      setProvider('AUTO · ERROR');
-      setItems(v=>[...v,{role:'ceo',text:'เกิดข้อผิดพลาด: '+String(e?.message||e),meta:'ERROR'}]);
-    } finally { setBusy(false); setThinking('Ceo กำลังค้นความจำ…'); }
+    } catch(e:any){setProvider('AUTO · ERROR');setItems(v=>[...v,{role:'ceo',text:'เกิดข้อผิดพลาด: '+String(e?.message||e),meta:'ERROR',at:Date.now()}]);}
+    finally{setBusy(false);setThinking('Ceo กำลังค้นความจำ…')}
   }
-  return <div className="chat-shell flex flex-col min-h-0"><div className="flex items-center justify-between gap-3 pb-3"><div><div className="font-semibold">Ceo Chat / Auto Router</div><div className="muted text-[11px]">Fallback AI · ใช้เมื่อไม่ได้สั่งผ่าน ChatGPT</div></div><span className="badge">{provider}</span></div><div className="flex-1 min-h-0 overflow-auto space-y-3 pr-1">{items.map((item,i)=><div key={i} className={'chat-bubble '+(item.role==='user'?'chat-user':'chat-ceo')}>{item.text}{item.role==='ceo'&&item.meta&&<div className="chat-meta">{item.meta}</div>}</div>)}{busy&&<div className="chat-bubble chat-ceo muted">{thinking}</div>}</div><div className="chat-composer pt-3 flex gap-2"><input className="input" value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>e.key==='Enter'&&void send()} placeholder="พิมพ์ถาม Ceo…"/><button className="btn btn-primary px-4" onClick={()=>void send()} disabled={busy||!message.trim()}><MessageSquareText size={20}/></button></div></div>;
+  return <div className="chat-shell flex flex-col min-h-0">
+    <div className="flex items-center justify-between gap-3 pb-3"><div><div className="font-semibold">Ceo Chat / Auto Router</div><div className="muted text-[11px]">Knowledge ก่อน · AI เมื่อจำเป็น · เก็บ Chat Log ในอุปกรณ์</div></div><div className="flex items-center gap-2"><span className="badge">{provider}</span><button className="badge" onClick={clearLog}>เคลียร์ Log</button></div></div>
+    <div ref={listRef} onScroll={e=>{const el=e.currentTarget,near=el.scrollHeight-el.scrollTop-el.clientHeight<90;setFollowLatest(near);if(near)setNewBelow(false)}} className="chat-log flex-1 min-h-0 overflow-auto space-y-3 pr-1">
+      {items.map((item,i)=><div key={(item.at||i)+'-'+i} className={'chat-bubble '+(item.role==='user'?'chat-user':'chat-ceo')}>{item.role==='ceo'&&<span className="chat-ceo-name">Ceo : </span>}{item.text}{item.role==='ceo'&&item.meta&&<div className="chat-meta">{item.meta}</div>}</div>)}
+      {busy&&<div className="chat-bubble chat-ceo muted"><span className="chat-ceo-name">Ceo : </span>{thinking}</div>}
+    </div>
+    {newBelow&&<button className="chat-jump-latest" onClick={jumpLatest}>↓ ข้อความล่าสุด</button>}
+    <div className="chat-composer pt-3 flex gap-2"><input className="input" value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>e.key==='Enter'&&void send()} placeholder="พิมพ์ถาม Ceo…"/><button className="btn btn-primary px-4" onClick={()=>void send()} disabled={busy||!message.trim()}><MessageSquareText size={20}/></button></div>
+  </div>;
 }
 function TodayPage() {
   const [data,setData]=useState<{events:EventRecord[];tasks:TaskRecord[]}|null>(null); const [error,setError]=useState('');

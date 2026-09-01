@@ -6,6 +6,10 @@ const clean=(value:unknown,max=6000)=>String(value??'').replace(/\u0000/g,'').tr
 const textList=(value:unknown)=>Array.isArray(value)?value.map(v=>clean(v,120)).filter(Boolean):[];
 const meta=(value:unknown):Record<string,unknown>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,unknown>:{};
 const stable=(value:string)=>{let h=2166136261;for(let i=0;i<value.length;i++){h^=value.charCodeAt(i);h=Math.imul(h,16777619)}return (h>>>0).toString(36)};
+const SUBJECT_TYPES=new Set(['memory','event','task','decision','conversation','knowledge']);
+function subjectText(value:unknown){return clean(value,1200).toLocaleLowerCase().replace(/^(?:memory|question)\s*:\s*/i,'').replace(/ภาพยนต(?:ร์|์)?/g,'ภาพยนต').replace(/big\s*c/g,'bigc').replace(/(?:วันที่|เวลา|เดือน|พ\.ศ\.|พศ)/g,' ').replace(/\d+/g,' ').replace(/[^\p{L}\p{N}]+/gu,'').trim()}
+function trigrams(value:string){const text=subjectText(value);const out=new Set<string>();if(text.length<6)return out;for(let i=0;i<=text.length-3;i++)out.add(text.slice(i,i+3));return out}
+function subjectSimilarity(a:KnowledgeGraphNode,b:KnowledgeGraphNode){const ga=trigrams(`${a.title} ${a.summary||a.content||''}`),gb=trigrams(`${b.title} ${b.summary||b.content||''}`);if(ga.size<3||gb.size<3)return 0;let shared=0;for(const gram of ga)if(gb.has(gram))shared++;return shared/Math.min(ga.size,gb.size)};
 
 function node(input:Partial<KnowledgeGraphNode>&Pick<KnowledgeGraphNode,'id'|'title'>):KnowledgeGraphNode{
   return {
@@ -30,7 +34,7 @@ function node(input:Partial<KnowledgeGraphNode>&Pick<KnowledgeGraphNode,'id'|'ti
 
 function relationLabel(value:string){
   const key=value.toUpperCase();
-  const labels:Record<string,string>={PART_OF:'อยู่ใน',ABOUT:'เกี่ยวกับ',RELATED_TO:'เกี่ยวข้อง',DERIVED_FROM:'มาจาก',MENTIONS:'กล่าวถึง',INVOLVES:'เกี่ยวข้องกับ',OCCURS_AT:'เกิดเมื่อ',SOURCE:'แหล่งที่มา',FOLLOWS:'ต่อจาก'};
+  const labels:Record<string,string>={PART_OF:'อยู่ใน',ABOUT:'เกี่ยวกับ',RELATED_TO:'เกี่ยวข้อง',SAME_TOPIC:'เรื่องเดียวกัน',DERIVED_FROM:'มาจาก',MENTIONS:'กล่าวถึง',INVOLVES:'เกี่ยวข้องกับ',OCCURS_AT:'เกิดเมื่อ',LOCATED_AT:'สถานที่',SOURCE:'แหล่งที่มา',FOLLOWS:'ต่อจาก'};
   return labels[key]||value;
 }
 
@@ -82,7 +86,11 @@ export async function loadKnowledgeGraph(nodeLimit=220,linkLimit=500):Promise<Kn
 
   for(const raw of knowledgeR.data||[]){if(objectToNode.has(String(raw.id)))continue;const id=String(raw.id);addNode(node({id,title:raw.title,summary:raw.summary,content:raw.content,knowledge_type:raw.knowledge_type,node_type:'knowledge',topic:raw.topic,tags:raw.tags||[],updated_at:raw.updated_at,importance:raw.importance,metadata:{...meta(raw.metadata),objectId:raw.id,projectId:raw.project_id}}));objectToNode.set(String(raw.id),id)}
   for(const raw of memoriesR.data||[]){if(mirroredRefs.has(String(raw.id))||objectToNode.has(String(raw.id)))continue;legacy('memory:'+raw.id,'memory',raw.title||raw.memory_type,raw.content,raw.content,raw.updated_at,{objectId:raw.id,projectId:raw.project_id,projectRef:clean(meta(raw.metadata).projectRef,180),tags:raw.tags,importance:raw.importance,metadata:raw.metadata,memoryType:raw.memory_type,scope:raw.scope});}
-  for(const raw of eventsR.data||[]){if(['cancelled'].includes(String(raw.status))||mirroredRefs.has(String(raw.id))||objectToNode.has(String(raw.id)))continue;legacy('event:'+raw.id,'event',raw.title,raw.description,raw.description,raw.updated_at,{objectId:raw.id,projectId:raw.project_id,projectRef:clean(meta(raw.metadata).projectRef,180),tags:raw.tags,eventAt:raw.start_at,metadata:raw.metadata,eventType:raw.event_type,location:raw.location,domainStatus:raw.status,priority:raw.priority});}
+  for(const raw of eventsR.data||[]){
+    if(['cancelled'].includes(String(raw.status))||mirroredRefs.has(String(raw.id))||objectToNode.has(String(raw.id)))continue;
+    const eventNode=legacy('event:'+raw.id,'event',raw.title,raw.description,raw.description,raw.updated_at,{objectId:raw.id,projectId:raw.project_id,projectRef:clean(meta(raw.metadata).projectRef,180),tags:raw.tags,eventAt:raw.start_at,metadata:raw.metadata,eventType:raw.event_type,location:raw.location,domainStatus:raw.status,priority:raw.priority});
+    const location=clean(raw.location,240);if(location){const key=location.toLocaleLowerCase().replace(/\s+/g,' '),placeId='place:'+stable(key);addNode(node({id:placeId,title:location,summary:'สถานที่',knowledge_type:'place',node_type:'place',topic:'place',tags:['place'],updated_at:raw.updated_at,reference_path:'ceo://place/'+encodeURIComponent(location),metadata:{canonicalPlace:key}}));addEdge(eventNode,placeId,'LOCATED_AT',.97,'structured-event')}
+  }
   for(const raw of tasksR.data||[]){if(['cancelled'].includes(String(raw.status))||mirroredRefs.has(String(raw.id))||objectToNode.has(String(raw.id)))continue;legacy('task:'+raw.id,'task',raw.title,raw.description,raw.description,raw.updated_at,{objectId:raw.id,projectId:raw.project_id,projectRef:clean(meta(raw.metadata).projectRef,180),tags:raw.tags,eventAt:raw.due_at,metadata:raw.metadata,domainStatus:raw.status,priority:raw.priority});}
   for(const raw of peopleR.data||[]){if(mirroredRefs.has(String(raw.id))||objectToNode.has(String(raw.id)))continue;legacy('person:'+raw.id,'person',raw.full_name,([raw.position,raw.organization].filter(Boolean).join(' · ')),raw.notes,raw.updated_at,{objectId:raw.id,projectId:raw.project_id,projectRef:clean(meta(raw.metadata).projectRef,180),tags:raw.tags,importance:raw.importance,metadata:raw.metadata,nickname:raw.nickname,position:raw.position,organization:raw.organization,relationship:raw.relationship});}
   for(const raw of decisionsR.data||[]){if(mirroredRefs.has(String(raw.id))||objectToNode.has(String(raw.id)))continue;legacy('decision:'+raw.id,'decision',raw.title||'Decision',raw.content,raw.content,raw.updated_at,{objectId:raw.id,projectId:raw.project_id,projectRef:clean(meta(raw.metadata).projectRef,180),tags:raw.tags,importance:raw.importance,eventAt:raw.decided_at,metadata:raw.metadata,rationale:raw.rationale});}
@@ -99,7 +107,8 @@ export async function loadKnowledgeGraph(nodeLimit=220,linkLimit=500):Promise<Kn
     if(!projectNode&&projectRef){projectNode='project-ref:'+stable(projectRef);addNode(node({id:projectNode,title:projectRef,summary:'Project reference',knowledge_type:'project',node_type:'project',topic:projectRef,tags:['project'],updated_at:n.updated_at,project_ref:projectRef,reference_path:'ceo://project-ref/'+encodeURIComponent(projectRef)}));projectByRef.set(projectRef,projectNode)}
     if(projectNode&&projectNode!==n.id)addEdge(n.id,projectNode,'PART_OF',.92,'project');
 
-    const topics=[n.topic,...n.tags,...textList(m.topicIds),...textList(m.topics)].map(x=>clean(x,100)).filter(x=>x&&x.length>1&&!GENERIC_TAGS.has(x.toLocaleLowerCase())&&!['memory','event','task','person','decision','conversation','project','knowledge'].includes(x.toLocaleLowerCase())).slice(0,4);
+    const structuredLocation=clean(m.location,240).toLocaleLowerCase();
+    const topics=[n.topic,...n.tags,...textList(m.topicIds),...textList(m.topics)].map(x=>clean(x,100)).filter(x=>{const lower=x.toLocaleLowerCase();return x&&x.length>1&&!GENERIC_TAGS.has(lower)&&!['memory','event','task','person','place','decision','conversation','project','knowledge'].includes(lower)&&!(structuredLocation&&structuredLocation.includes(lower))}).slice(0,4);
     for(const topic of [...new Set(topics)]){const topicId='topic:'+stable(topic.toLocaleLowerCase());addNode(node({id:topicId,title:topic,summary:'หัวข้อเชื่อมโยง',knowledge_type:'topic',node_type:'topic',topic,tags:['topic'],updated_at:n.updated_at,reference_path:'ceo://topic/'+encodeURIComponent(topic)}));addEdge(n.id,topicId,'ABOUT',.78,'topic')}
 
     const conversationKey=clean(m.conversationKey,240);if(conversationKey&&conversationByKey.has(conversationKey))addEdge(n.id,conversationByKey.get(conversationKey)!,'DERIVED_FROM',.96,'auto-memory');
@@ -111,6 +120,17 @@ export async function loadKnowledgeGraph(nodeLimit=220,linkLimit=500):Promise<Kn
   // Connect nodes sharing the same non-generic topic, but keep the graph readable.
   const groups=new Map<string,string[]>();for(const n of nodes.values()){const t=clean(n.topic,100).toLocaleLowerCase();if(!t||GENERIC_TAGS.has(t)||['memory','event','task','person','decision','conversation','project','knowledge','source'].includes(t))continue;const list=groups.get(t)||[];if(list.length<12)list.push(n.id);groups.set(t,list)}
   for(const ids of groups.values())for(let i=1;i<ids.length;i++)addEdge(ids[0]!,ids[i]!,'RELATED_TO',.48,'topic-cluster');
+
+  // Connect different records that describe the same subject (Event / Memory / Conversation),
+  // but cap inferred edges per node so repeated memories do not turn the graph into a hairball.
+  const subjectNodes=[...nodes.values()].filter(n=>SUBJECT_TYPES.has(String(n.node_type||n.knowledge_type).toLocaleLowerCase())&&subjectText(`${n.title} ${n.summary||n.content||''}`).length>=8).slice(0,220);
+  const inferredCount=new Map<string,number>();
+  for(let i=0;i<subjectNodes.length;i++)for(let j=i+1;j<subjectNodes.length;j++){
+    const a=subjectNodes[i]!,b=subjectNodes[j]!;if((inferredCount.get(a.id)||0)>=3||(inferredCount.get(b.id)||0)>=3)continue;
+    const score=subjectSimilarity(a,b);if(score<.62)continue;
+    addEdge(a.id,b.id,'SAME_TOPIC',Math.min(.9,.54+score*.38),'subject-similarity',{similarity:Math.round(score*1000)/1000});
+    inferredCount.set(a.id,(inferredCount.get(a.id)||0)+1);inferredCount.set(b.id,(inferredCount.get(b.id)||0)+1);
+  }
 
   const finalNodes=[...nodes.values()].sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at))).slice(0,320);
   const visible=new Set(finalNodes.map(n=>n.id));

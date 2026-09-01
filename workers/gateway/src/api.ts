@@ -1,7 +1,7 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
-import { cloudChatFallback, recallSearchQuery } from './chat';
+import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectQuery } from './chat';
 import { composeTaskAnswer, composeTemporalAnswer, detectChatIntent, isQuestionLike, memoryLooksLikeQuestion, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
@@ -84,7 +84,7 @@ async function temporalKnowledge(env: Env, token: string, intent: TimeIntent) {
   const uniq=(rows:any[])=>{const seen=new Set<string>();return rows.filter(row=>{const key=clean(row.id||row.title||row.content,500).toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true})};
   return {events:uniq(events),tasks:uniq(tasks),memories};
 }
-async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
+async function searchKnowledge(env: Env, token: string, query: string, limit = 10, answerField = recallAnswerField(query)) {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
   const recallTerms = [...new Set(recallQ.split(/\s+/).filter(Boolean).flatMap(token => token.length >= 6 ? [token, token.slice(0, -1)] : [token]))].join(' ');
@@ -124,7 +124,12 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
     const importance = Number(row.importance || 1) * 5;
     const timestamp = Date.parse(row.updated_at || row.decided_at || row.created_at || '') || 0;
     const recency = timestamp ? Math.max(0, 10 - (Date.now() - timestamp) / 604800000) : 0;
-    return { ...row, _score: Math.round((hits + importance + recency) * 100) / 100 };
+    const structuredBoost = answerField==='location' ? (row.kind==='events'&&row.location?70:0)
+      : answerField==='date' ? (row.kind==='events'&&row.start_at?70:row.kind==='tasks'&&row.due_at?55:0)
+      : answerField==='time' ? (row.kind==='events'&&row.start_at?70:row.kind==='tasks'&&row.due_at?55:0)
+      : answerField==='status' ? ((row.kind==='tasks'||row.kind==='events')&&row.status?55:0)
+      : 0;
+    return { ...row, _score: Math.round((hits + importance + recency + structuredBoost) * 100) / 100 };
   }).sort((a, b) => b._score - a._score).slice(0, limit);
   return { query: q, count: ranked.length, results: ranked };
 }
@@ -368,8 +373,11 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/search' && request.method === 'GET') return ok(await searchKnowledge(env, token, clean(url.searchParams.get('q'), 240), safeLimit(url.searchParams.get('limit'), 10, 30)));
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
-      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[] }>(request), message = clean(body.message, 4000);
+      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string}> }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
+      const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000)})).filter(item=>item.text);
+      const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
+      const contextualQuery=isBareRecallFieldQuestion(message)&&previousUser?previousUser.text:message;
       const intent = detectChatIntent(message);
       const question = isQuestionLike(message);
       let autoMemory: any = null;
@@ -402,8 +410,13 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         const tasks = await rest<TaskRecord[]>(env, token, `tasks${qs({ select: '*', status: 'in.(open,in_progress,waiting,overdue)', order: 'due_at.asc.nullslast,updated_at.desc', limit: 30 })}`);
         return ok({ intent: 'tasks', answer:composeTaskAnswer(tasks), tasks, autoMemory, mode:'knowledge', provider:'knowledge' });
       }
-      const search = await searchKnowledge(env, token, message, 8);
-      const fallbackAnswer = cloudChatFallback(message, search.results);
+      const answerField=recallAnswerField(message);
+      const search = await searchKnowledge(env, token, contextualQuery, 8, answerField);
+      const directAnswer=composeRecallAnswer(message,search.results);
+      const fallbackAnswer = directAnswer.answer || cloudChatFallback(message, search.results);
+      if(intent.kind==='recall'&&directAnswer.confident){
+        return ok({ intent:'recall', answer:directAnswer.answer, search, ai:false, aiConfigured:Boolean(env.LLM_API_KEY), mode:'knowledge', provider:'knowledge', autoMemory:null, context:{conversationId:clean(body.conversationId,200),query:contextualQuery,field:directAnswer.field,sourceId:directAnswer.sourceId} });
+      }
       const routed = await enqueueProviderChat(env, token, message, search.results).catch(() => null);
       if (routed?.job?.id) return ok({ intent: 'runtime-provider', answer: 'กำลังส่งคำถามให้ Ceo Auto Router…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'runtime-provider-pending', provider: 'auto', jobId: routed.job.id, device: routed.device, autoMemory });
       const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);

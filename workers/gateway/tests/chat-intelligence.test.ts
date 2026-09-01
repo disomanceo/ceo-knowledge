@@ -79,7 +79,19 @@ describe('topic recall across structured secretary data',()=>{
      throw new Error('unexpected '+url);
    });
    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'ดูภาพยนต์วันไหน'})}),apiEnv),payload:any=await response.json();
-   expect(payload.data.intent).toBe('recall');expect(payload.data.answer).toContain('7 กันยายน 2569');expect(payload.data.answer).toContain('Big C สุพรรณบุรี');expect(payload.data.autoMemory).toBeNull();
-   expect(calls.some(x=>x.includes('/rest/v1/events?'))).toBe(true);expect(calls.some(x=>x.includes('memory_replica_apply'))).toBe(false);
+   expect(payload.data.intent).toBe('recall');expect(payload.data.mode).toBe('knowledge');expect(payload.data.answer).toBe('วันที่ 7 กันยายน 2569ครับ');expect(payload.data.autoMemory).toBeNull();
+   expect(calls.some(x=>x.includes('/rest/v1/events?'))).toBe(true);expect(calls.some(x=>x.includes('memory_replica_apply'))).toBe(false);expect(calls.some(x=>x.includes('/rest/v1/runtime_jobs'))).toBe(false);
+ });
+ it('uses recent conversation context for a bare follow-up field question',async()=>{
+   const calls:string[]=[];vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);calls.push(decodeURIComponent(url));
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/events?'))return json([{id:'e7',title:'พานักเรียนไปดูภาพยนตร์ที่ Big C สุพรรณบุรี',description:'วันที่ 7 กันยายน 2569 พานักเรียนไปดูภาพยนตร์',event_type:'activity',start_at:'2026-09-06T17:00:00.000Z',end_at:null,all_day:true,timezone:'Asia/Bangkok',location:'Big C สุพรรณบุรี',status:'planned',priority:'normal',updated_at:'2026-09-01T07:11:41.000Z'}]);
+     if(url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/conversation_summaries?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/memory_nodes?')||url.includes('/rest/v1/devices?'))return json([]);
+     throw new Error('unexpected '+url);
+   });
+   const recentContext=[{role:'user',text:'ดูภาพยนต์วันไหน'},{role:'ceo',text:'วันที่ 7 กันยายน 2569ครับ'}];
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'ที่ไหน',conversationId:'mobile:test',recentContext})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.answer).toBe('ที่ Big C สุพรรณบุรีครับ');expect(payload.data.context.query).toBe('ดูภาพยนต์วันไหน');expect(payload.data.context.field).toBe('location');expect(payload.data.mode).toBe('knowledge');
+   expect(calls.some(x=>x.includes('/rest/v1/runtime_jobs'))).toBe(false);
  });
 });
