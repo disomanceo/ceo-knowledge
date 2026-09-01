@@ -5,6 +5,7 @@ import { cloudChatFallback } from './chat';
 import { enqueueOllamaChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
+import { autoCapture } from './auto-memory';
 
 const corsHeaders: HeadersInit = {
   'access-control-allow-origin': '*',
@@ -202,6 +203,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
 
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
+    if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
+      const body = await jsonBody<any>(request);
+      const result = await autoCapture(env, token, body);
+      return ok(result, body?.dryRun || (!result.written && !result.archive) ? 200 : 201);
+    }
+
     if (url.pathname === '/api/memories' && request.method === 'GET') {
       const query = clean(url.searchParams.get('q'), 240), limit = safeLimit(url.searchParams.get('limit'), 30, 100);
       const or = query ? searchOr(['title', 'content'], query) : '';
@@ -323,8 +330,18 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/search' && request.method === 'GET') return ok(await searchKnowledge(env, token, clean(url.searchParams.get('q'), 240), safeLimit(url.searchParams.get('limit'), 10, 30)));
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
-      const body = await jsonBody<{ message?: string }>(request), message = clean(body.message, 4000);
+      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[] }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
+      let autoMemory: any = null;
+      try {
+        autoMemory = await autoCapture(env, token, { message, conversationId: body.conversationId, projectId: body.projectId, sourceRef: body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
+        if (autoMemory?.decision?.explicit) {
+          if (autoMemory?.decision?.blocked) return ok({ intent: 'remember', answer: 'ไม่บันทึกข้อมูลนี้ เพราะตรวจพบข้อมูลลับหรือข้อมูลอ่อนไหว', memory: null, autoMemory });
+          if (autoMemory?.written) return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้ว', memory: autoMemory.written.record || null, autoMemory });
+        }
+      } catch (error: any) {
+        autoMemory = { ok: false, error: clean(error?.message || error || 'AUTO_MEMORY_FAILED', 300) };
+      }
       const rememberMatch = message.match(/^(?:เธเธณเนเธงเน(?:เธงเนเธฒ)?|เธเธณเธงเนเธฒ|remember\s*:?)\s*(.+)$/i);
       if (rememberMatch?.[1]) {
         const memory = await saveMemory(env, token, { title: 'เธเธฒเธ Ceo Mobile Chat', content: rememberMatch[1], memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile-chat'] });
