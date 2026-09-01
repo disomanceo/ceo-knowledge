@@ -1,5 +1,5 @@
 import { describe,expect,it } from 'vitest';
-import { composeDateAnswer,dateTextMatchesIntent,detectChatIntent,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent } from '../src/chat-intelligence';
+import { composeDateAnswer,dateTextMatchesIntent,detectChatIntent,extractTemporalTopic,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent,parseTemporalIntent,temporalTextMatchesIntent } from '../src/chat-intelligence';
 const now=new Date('2026-09-01T04:40:00.000Z');
 describe('chat intelligence',()=>{
  it('recognizes Thai question without question mark',()=>{expect(isQuestionLike('วันที่ 18 มีอะไรไหม')).toBe(true);expect(memoryLooksLikeQuestion({content:'Memory: วันที่ 18 มีอะไรไหม'})).toBe(true)});
@@ -9,6 +9,11 @@ describe('chat intelligence',()=>{
  it('does not treat ordinary numbers as calendar dates',()=>{expect(detectChatIntent('โปรเจกต์ 2 มีอะไรไหม',now).kind).toBe('recall')});
  it('routes a bare leading day question as a date',()=>{const x=detectChatIntent('17 มีอะไรไหม',now);expect(x.kind).toBe('date');if(x.kind==='date'){expect(x.day).toBe(17);expect(x.month).toBe(9)}});
  it('matches exact Thai dates embedded in memory text',()=>{const i=parseDateIntent('17 ก.ย. มีอะไร',now)!;expect(dateTextMatchesIntent('วันที่ 17 กันยายน 2569 ต้องส่งเล่ม PA ให้สำนักงานเขต',i)).toBe(true);expect(dateTextMatchesIntent('วันที่ 18 กันยายน 2569 มีงานเลี้ยง',i)).toBe(false)});
+ it('supports relative day vocabulary',()=>{expect(parseDateIntent('พรุ่งนี้มีอะไร',now)?.day).toBe(2);expect(parseDateIntent('มะรืนมีอะไร',now)?.day).toBe(3);expect(parseDateIntent('เมื่อวานมีอะไร',now)?.day).toBe(31);expect(parseDateIntent('วานซืนมีอะไร',now)?.day).toBe(30)});
+ it('parses week month and year ranges centrally',()=>{expect(parseTemporalIntent('สัปดาห์หน้ามีอะไรบ้าง',now)?.granularity).toBe('week');expect(parseTemporalIntent('เดือนนี้มีงานเกษียณอะไรบ้าง',now)?.month).toBe(9);expect(parseTemporalIntent('เดือนหน้า มีอะไร',now)?.month).toBe(10);expect(parseTemporalIntent('ปีหน้า มีอะไร',now)?.year).toBe(2027);expect(parseTemporalIntent('ปีที่แล้ว มีอะไร',now)?.year).toBe(2025)});
+ it('parses named month year and forward windows',()=>{const m=parseTemporalIntent('เดือนตุลาคม 2569 มีอะไรบ้าง',now)!;expect(m.month).toBe(10);expect(m.year).toBe(2026);expect(parseTemporalIntent('ภายใน 7 วัน มีอะไร',now)?.granularity).toBe('range')});
+ it('extracts a temporal topic instead of searching the whole sentence',()=>{expect(extractTemporalTopic('เดือนนี้มีงานเกษียณอะไรบ้าง')).toBe('งานเกษียณ');expect(extractTemporalTopic('เดือนนี้มีงานอะไรบ้าง')).toBe('')});
+ it('matches explicit memory dates against a broad temporal range',()=>{const i=parseTemporalIntent('เดือนนี้มีงานเกษียณอะไรบ้าง',now)!;expect(temporalTextMatchesIntent('วันที่ 18 กันยายน 2569 มีงานเลี้ยงเกษียณ',i)).toBe(true);expect(temporalTextMatchesIntent('วันที่ 18 ตุลาคม 2569 มีงานเลี้ยงเกษียณ',i)).toBe(false)});
  it('composes secretary-style date answer',()=>{const i=parseDateIntent('วันที่ 18 มีอะไรไหม',now)!;const a=composeDateAnswer(i,{events:[{title:'งานเกษียณ',start_at:'2026-09-18T10:00:00Z',location:''}],tasks:[],memories:[]});expect(a).toContain('งานเกษียณ');expect(a).not.toContain('พบข้อมูลที่เกี่ยวข้อง')});
 });
 
@@ -44,4 +49,22 @@ describe('structured chat retrieval',()=>{
      const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message})}),apiEnv),payload:any=await response.json();
      expect(payload.data.intent).toBe('date');expect(payload.data.answer).toContain('ส่งเล่ม PA สำนักงานเขต');expect(payload.data.answer).not.toContain('งานเกษียณ');
    }
- });});
+ });
+ it('answers a topic-filtered month query from structured events',async()=>{
+   vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=String(input),method=String(init.method||'GET').toUpperCase();
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/events?'))return json([
+       {id:'e18',title:'งานเลี้ยงเกษียณ ผอ. เผือก',description:'ช่วงเย็น',event_type:'activity',start_at:'2026-09-18T10:00:00Z',end_at:null,timezone:'Asia/Bangkok',location:'',status:'planned',priority:'normal'},
+       {id:'e25',title:'งานเกษียณ ผอ. เผือก ที่โรงเรียน',description:'',event_type:'activity',start_at:'2026-09-25T02:00:00Z',end_at:null,timezone:'Asia/Bangkok',location:'โรงเรียน',status:'planned',priority:'normal'},
+       {id:'e20',title:'ประชุมครูประจำเดือน',description:'',event_type:'meeting',start_at:'2026-09-20T02:00:00Z',end_at:null,timezone:'Asia/Bangkok',location:'',status:'planned',priority:'normal'},
+       {id:'eOct',title:'งานเกษียณเดือนตุลาคม',description:'',event_type:'activity',start_at:'2026-10-02T02:00:00Z',end_at:null,timezone:'Asia/Bangkok',location:'',status:'planned',priority:'normal'},
+     ]);
+     if(url.includes('/rest/v1/tasks?'))return json([]);
+     if(url.includes('/rest/v1/memories?'))return json([]);
+     if(url.includes('/rest/v1/memory_nodes?'))return json([]);
+     throw new Error('unexpected '+method+' '+url);
+   });
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เดือนนี้มีงานเกษียณอะไรบ้าง'})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.intent).toBe('temporal');expect(payload.data.range.granularity).toBe('month');expect(payload.data.answer).toContain('งานเลี้ยงเกษียณ ผอ. เผือก');expect(payload.data.answer).toContain('งานเกษียณ ผอ. เผือก ที่โรงเรียน');expect(payload.data.answer).not.toContain('ประชุมครู');expect(payload.data.answer).not.toContain('เดือนตุลาคม');
+ });
+});

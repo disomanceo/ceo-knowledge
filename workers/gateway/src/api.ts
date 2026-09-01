@@ -2,7 +2,7 @@ import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type K
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback, recallSearchQuery } from './chat';
-import { composeDateAnswer, composeTaskAnswer, dateTextMatchesIntent, detectChatIntent, isQuestionLike, memoryLooksLikeQuestion, type DateIntent } from './chat-intelligence';
+import { composeTaskAnswer, composeTemporalAnswer, detectChatIntent, isQuestionLike, memoryLooksLikeQuestion, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
@@ -64,23 +64,27 @@ async function listToday(env: Env, token: string, url: URL) {
   };
 }
 
-async function dateKnowledge(env: Env, token: string, intent: DateIntent) {
-  const dayTerm=String(intent.day), textOr=searchOr(['title','content'],dayTerm);
+async function temporalKnowledge(env: Env, token: string, intent: TimeIntent) {
+  const topic=intent.kind==='temporal'?intent.topic:'';
+  const seed=topic||(intent.kind==='date'?String(intent.day):'');
+  const textOr=seed?searchOr(['title','content'],seed):'';
   const [events,tasks,eventMemories,legacyText,replicaText]=await Promise.all([
-    rest<EventRecord[]>(env,token,`events${qs({select:'*',start_at:`gte.${intent.from}`,order:'start_at.asc',limit:50})}`).then(rows=>rows.filter(row=>Date.parse(row.start_at)<=Date.parse(intent.to)&&row.status!=='cancelled')).catch(()=>[]),
-    rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',due_at:`gte.${intent.from}`,order:'due_at.asc.nullslast,updated_at.desc',limit:50})}`).then(rows=>rows.filter(row=>Boolean(row.due_at)&&Date.parse(String(row.due_at))<=Date.parse(intent.to))).catch(()=>[]),
-    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',event_at:`gte.${intent.from}`,order:'event_at.asc',limit:50})}`).then(rows=>rows.filter(row=>row.event_at&&Date.parse(row.event_at)<=Date.parse(intent.to)&&!memoryLooksLikeQuestion(row))).catch(()=>[]),
-    rest<any[]>(env,token,`memories${qs({select:'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at',status:'eq.active',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:80})}`).catch(()=>[]),
-    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:80})}`).catch(()=>[]),
+    rest<EventRecord[]>(env,token,`events${qs({select:'*',start_at:`gte.${intent.from}`,order:'start_at.asc',limit:200})}`).then(rows=>rows.filter(row=>Date.parse(row.start_at)<=Date.parse(intent.to)&&row.status!=='cancelled'&&topicMatches(`${row.title||''} ${row.description||''} ${row.location||''}`,topic))).catch(()=>[]),
+    rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',due_at:`gte.${intent.from}`,order:'due_at.asc.nullslast,updated_at.desc',limit:200})}`).then(rows=>rows.filter(row=>Boolean(row.due_at)&&Date.parse(String(row.due_at))<=Date.parse(intent.to)&&topicMatches(`${row.title||''} ${row.description||''} ${row.waiting_for||''}`,topic))).catch(()=>[]),
+    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',event_at:`gte.${intent.from}`,order:'event_at.asc',limit:200})}`).then(rows=>rows.filter(row=>row.event_at&&Date.parse(row.event_at)<=Date.parse(intent.to)&&!memoryLooksLikeQuestion(row)&&topicMatches(`${row.title||''} ${row.content||''}`,topic))).catch(()=>[]),
+    rest<any[]>(env,token,`memories${qs({select:'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at',status:'eq.active',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:250})}`).catch(()=>[]),
+    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:250})}`).catch(()=>[]),
   ]);
   const mirrored=new Set(replicaText.flatMap(row=>Array.isArray(row.source_refs)?row.source_refs:[]));
   const textual=[...replicaText,...legacyText.filter(row=>!mirrored.has(String(row.id||'')))]
     .filter(row=>!memoryLooksLikeQuestion(row))
-    .filter(row=>dateTextMatchesIntent(`${clean(row.title,500)} ${clean(row.content,5000)}`,intent));
+    .filter(row=>topicMatches(`${clean(row.title,500)} ${clean(row.content,5000)}`,topic))
+    .filter(row=>temporalTextMatchesIntent(`${clean(row.title,500)} ${clean(row.content,5000)}`,intent));
   const memorySeen=new Set<string>(),memories=[...eventMemories,...textual].filter(row=>{const key=clean(row.node_id||row.id||row.title||row.content,500).toLocaleLowerCase();if(!key||memorySeen.has(key))return false;memorySeen.add(key);return true});
   const uniq=(rows:any[])=>{const seen=new Set<string>();return rows.filter(row=>{const key=clean(row.id||row.title||row.content,500).toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true})};
   return {events:uniq(events),tasks:uniq(tasks),memories};
-}async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
+}
+async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
   const perTable = Math.max(5, Math.min(25, limit * 2));
@@ -376,9 +380,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         const memory = await saveMemory(env, token, { title: 'จาก Ceo Mobile Chat', content: rememberMatch[1], memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile-chat'] });
         return ok({ intent: 'remember', answer: 'จำไว้ใน Ceo Knowledge แล้วครับ', memory, autoMemory });
       }
-      if (intent.kind === 'date') {
-        const date = await dateKnowledge(env, token, intent);
-        return ok({ intent:'date', answer:composeDateAnswer(intent,date), date, range:{from:intent.from,to:intent.to,label:intent.label}, autoMemory:null, mode:'knowledge', provider:'knowledge' });
+      if (intent.kind === 'date' || intent.kind === 'temporal') {
+        const temporal = await temporalKnowledge(env, token, intent);
+        return ok({ intent:intent.kind, answer:composeTemporalAnswer(intent,temporal), temporal, range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity}, autoMemory:null, mode:'knowledge', provider:'knowledge' });
       }
       if (intent.kind === 'today') {
         const today = await listToday(env, token, url);
