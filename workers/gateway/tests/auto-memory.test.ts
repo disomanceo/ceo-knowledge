@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { autoCapture, classifyAutoMemoryHeuristic, containsAutoMemorySecret, parseThaiDateRange, parseThaiDateTime } from '../src/auto-memory';
+import { autoCapture, classifyAutoMemoryHeuristic, containsAutoMemorySecret, parseThaiDateRange, parseThaiDateTime, resolveMemoryCaptureTurn } from '../src/auto-memory';
 import { handleApi } from '../src/api';
 
 const env:any={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public',APP_ENV:'test'};
@@ -62,6 +62,29 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
     expect(d.allDay).toBe(true);
     expect(d.retention).toBe('permanent');
     expect(d.needsConfirmation).toBe(false);
+  });
+
+  it('classifies tomorrow teaching supervision in a class period as a structured event',()=>{
+    const d=classifyAutoMemoryHeuristic({message:'พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3',source:'mobile'},now);
+    expect(d.kind).toBe('event');
+    expect(d.confidence).toBeGreaterThanOrEqual(0.9);
+    expect(d.eventAt).toBe('2026-09-01T17:00:00.000Z');
+    expect(d.allDay).toBe(true);
+    expect(d.content).toContain('คาบที่ 3');
+  });
+
+  it('resolves bare save follow-ups to the latest user content, never the Ceo reply',()=>{
+    const context=[{role:'user',text:'พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3'},{role:'ceo',text:'พรุ่งนี้ไม่มีนิเทศการสอนครูดาว'}];
+    const r=resolveMemoryCaptureTurn('ให้บันทึก',context);
+    expect(r.followUp).toBe(true);
+    expect(r.sourceText).toBe('พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
+    expect(r.message).toBe('บันทึกไว้ว่า พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
+  });
+
+  it('treats correction plus save as a new explicit capture',()=>{
+    const r=resolveMemoryCaptureTurn('ไม่ใช่ บันทึก พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3',[]);
+    expect(r.correction).toBe(true);
+    expect(r.message).toBe('บันทึกไว้ว่า พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
   });
 
   it('classifies a dated retirement party as a permanent event',()=>{
@@ -134,6 +157,51 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
     const archiveCall=calls.find(x=>x.url.includes('/conversation_summaries?')&&x.method==='POST');
     expect(archiveCall.body.conversation_key).toBe('chatgpt:retirement-2026');
     expect(archiveCall.body.metadata.classification).toBe('event');
+  });
+
+  it('auto-saves tomorrow supervision from chat without routing to AI',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(now);
+    const calls:any[]=[];
+    try{
+      vi.stubGlobal('fetch',async(input:any,init:any={})=>{
+        const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();
+        let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url,method,body});
+        if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+        if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
+        if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-row',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
+        if(url.endsWith('/rest/v1/events?select=*')&&method==='POST')return json([{id:'evt-supervision',...body}]);
+        if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
+        throw new Error('unexpected '+method+' '+url);
+      });
+      const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3',conversationId:'mobile:supervision'})}),env);
+      const payload:any=await response.json();
+      expect(payload.data.intent).toBe('remember');expect(payload.data.mode).toBe('knowledge');expect(payload.data.answer).toContain('บันทึกเป็นกิจกรรม');
+      const eventCall=calls.find(x=>x.url.endsWith('/rest/v1/events?select=*'));expect(eventCall.body.start_at).toBe('2026-09-01T17:00:00.000Z');expect(eventCall.body.all_day).toBe(true);expect(eventCall.body.description).toContain('คาบที่ 3');
+      expect(calls.some(x=>x.url.includes('/runtime_jobs'))).toBe(false);
+    }finally{vi.useRealTimers();}
+  });
+
+  it('saves the previous user turn when chat says ให้บันทึก',async()=>{
+    vi.useFakeTimers();vi.setSystemTime(now);
+    const calls:any[]=[];
+    try{
+      vi.stubGlobal('fetch',async(input:any,init:any={})=>{
+        const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();
+        let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url,method,body});
+        if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+        if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
+        if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-row',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
+        if(url.endsWith('/rest/v1/events?select=*')&&method==='POST')return json([{id:'evt-followup',...body}]);
+        if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
+        throw new Error('unexpected '+method+' '+url);
+      });
+      const recentContext=[{role:'user',text:'พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3'},{role:'ceo',text:'พรุ่งนี้ไม่มีนิเทศการสอนครูดาว คาบที่ 3'}];
+      const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'ให้บันทึก',conversationId:'mobile:supervision',recentContext})}),env);
+      const payload:any=await response.json();
+      expect(payload.data.intent).toBe('remember');expect(payload.data.answer).toContain('บันทึกเป็นกิจกรรม');
+      const eventCall=calls.find(x=>x.url.endsWith('/rest/v1/events?select=*'));expect(eventCall.body.description).toContain('พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');expect(eventCall.body.description).not.toContain('พรุ่งนี้ไม่มีนิเทศ');
+      expect(calls.some(x=>x.url.includes('/runtime_jobs'))).toBe(false);
+    }finally{vi.useRealTimers();}
   });
 
   it('writes a multi-day assignment from chat and acknowledges the durable capture',async()=>{

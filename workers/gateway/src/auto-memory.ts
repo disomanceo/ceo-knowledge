@@ -25,6 +25,8 @@ export interface AutoMemoryInput {
   useAI?: boolean;
 }
 
+export interface MemoryContextTurn { role?: string; text?: string; }
+
 export interface AutoMemoryDecision {
   kind: AutoMemoryKind;
   score: number;
@@ -106,6 +108,20 @@ function explicitInstruction(text: string): boolean {
 
 function stripExplicit(text: string): string {
   return text.replace(/^\s*(?:(?:ช่วย)?จำ(?:ไว้|เอาไว้|ให้หน่อย|อันนี้)?(?:ว่า)?|ให้จำ(?:ไว้)?(?:ว่า)?|(?:ช่วย)?บันทึก(?:ไว้|ให้หน่อย|อันนี้)?(?:ว่า)?|ให้บันทึก(?:ไว้)?(?:ว่า)?|จด(?:ไว้|ให้หน่อย)?(?:ว่า)?|เก็บ(?:ไว้|ข้อมูลนี้)?(?:ว่า)?|remember(?:\s+that)?|save\s+this)\s*[:：]?\s*/i, '').trim() || text.trim();
+}
+
+export function resolveMemoryCaptureTurn(message:string,recentContext:MemoryContextTurn[]=[]):{message:string;followUp:boolean;correction:boolean;sourceText:string}{
+  const text=clean(message,12_000);
+  const correction=text.match(/^\s*(?:ไม่ใช่|ขอแก้(?:เป็น)?|แก้เป็น|หมายถึง)\s*[,;:：-]?\s*(?:ให้)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้)?\s*(?:ว่า)?\s+(.+)$/i);
+  if(correction?.[1]){const sourceText=clean(correction[1],12_000);return{message:`บันทึกไว้ว่า ${sourceText}`,followUp:false,correction:true,sourceText};}
+  const bare=/^\s*(?:(?:ช่วย|ให้)?\s*)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้|อันนี้|เรื่องนี้)?(?:ให้หน่อย|ด้วย)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(text);
+  if(bare){
+    const previous=[...recentContext].reverse().find(item=>{const value=clean(item?.text,12_000);return String(item?.role||'').toLowerCase()==='user'&&value&&!isQuestionLike(value)&&!/^\s*(?:(?:ช่วย|ให้)?\s*)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้|อันนี้|เรื่องนี้)?(?:ให้หน่อย|ด้วย)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(value);});
+    const sourceText=clean(previous?.text,12_000);
+    if(sourceText)return{message:`บันทึกไว้ว่า ${sourceText}`,followUp:true,correction:false,sourceText};
+    return{message:'',followUp:true,correction:false,sourceText:''};
+  }
+  return{message:text,followUp:false,correction:false,sourceText:text};
 }
 
 export function containsAutoMemorySecret(text: string): boolean {
@@ -235,20 +251,24 @@ function contactFields(text: string) {
   return { fullName, organization, position };
 }
 
-function heuristicKind(text: string, eventAt: string | null, explicit: boolean, endAt: string | null = null): { kind: AutoMemoryKind; confidence: number } {
+function heuristicKind(text: string, eventAt: string | null, explicit: boolean, endAt: string | null = null, now = new Date()): { kind: AutoMemoryKind; confidence: number } {
   const question = isQuestionLike(text);
   const assignmentCue = /สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|ฝากให้|ให้[^\n]{0,120}(?:ทำ|จัด|รวบรวม|ถ่ายรูป|ส่ง|เตรียม|ตรวจ|แจ้ง)|รับผิดชอบ/i.test(text);
-  const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|appointment|meeting|schedule/i.test(text);
+  const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|นิเทศ(?:การสอน)?|สังเกตการสอน|ตรวจเยี่ยมการสอน|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|appointment|meeting|schedule/i.test(text);
   const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|รับผิดชอบ|todo|task|deadline/i.test(text);
   const projectCue = /โปรเจกต์|โครงการ|ระบบ|workspace|repository|repo|architecture|roadmap|version|เวอร์ชัน|ตัดสินใจ|เลือกใช้|กำหนดให้/i.test(text);
   const preferenceCue = /ฉัน(?:ชอบ|ไม่ชอบ|ต้องการ)|ผม(?:ชอบ|ไม่ชอบ|ต้องการ)|ต่อไป(?:นี้)?|จากนี้(?:ไป)?|ทุกครั้ง|prefer/i.test(text);
   const contactCue = /(?:ชื่อ|เรียกว่า|ตำแหน่ง|ทำงานที่|องค์กร|หน่วยงาน|เบอร์โทร|อีเมล|email)\s*[:：]/i.test(text);
   const deadlineCue = /ต้องส่ง|กำหนดส่ง|ครบกำหนด|deadline/i.test(text);
+  const eventTime=eventAt?Date.parse(eventAt):NaN;
+  const prospective=Number.isFinite(eventTime)&&eventTime>=now.getTime()-12*60*60*1000;
+  const structuredFutureCue=prospective&&/(?:คาบ(?:ที่)?\s*\d+|ครู|นักเรียน|โรงเรียน|สำนักงาน|ประชุม|นิเทศ|อบรม|สอน|สอบ|ทดสอบ|พา|ไป|จัด|ทำ|ตรวจ|เยี่ยม|เดินทาง|กิจกรรม)/i.test(text);
 
   if (eventAt && endAt && deadlineCue) return { kind: 'task', confidence: 0.97 };
   if (eventAt && endAt && (assignmentCue || eventCue)) return { kind: 'event', confidence: 0.98 };
   if (eventAt && taskCue) return { kind: 'task', confidence: 0.94 };
   if (eventAt && eventCue) return { kind: 'event', confidence: 0.96 };
+  if (eventAt && structuredFutureCue && !question) return { kind: 'event', confidence: 0.93 };
   if (contactCue && explicit) return { kind: 'contact', confidence: 0.86 };
   if (projectCue) return { kind: 'project_knowledge', confidence: explicit ? 0.98 : 0.84 };
   if (taskCue) return { kind: 'task', confidence: eventAt ? 0.93 : 0.82 };
@@ -287,10 +307,14 @@ export function classifyAutoMemoryHeuristic(input: AutoMemoryInput, now = new Da
   const content = stripExplicit(raw);
   const blocked = containsAutoMemorySecret(content);
   const dateRange = parseThaiDateRange(content, now);
-  const eventAt = dateRange?.startAt || parseThaiDateTime(content, now);
+  let eventAt = dateRange?.startAt || parseThaiDateTime(content, now);
   const endAt = dateRange?.endAt || null;
-  const allDay = Boolean(dateRange?.allDay);
-  const base = heuristicKind(content, eventAt, explicit, endAt);
+  const classPeriod=/คาบ(?:ที่)?\s*\d+/i.test(content);
+  let allDay = Boolean(dateRange?.allDay);
+  if(eventAt&&classPeriod&&!/(?:เวลา\s*)?\d{1,2}[:.]\d{2}|ตอนเช้า|ช่วงเช้า|ตอนบ่าย|ช่วงบ่าย|ตอนเย็น|ช่วงเย็น/i.test(content)){
+    const p=bangkokDateParts(new Date(eventAt)),midnight=bangkokIso(p.year,p.month,p.day,0,0);if(midnight)eventAt=midnight;allDay=true;
+  }
+  const base = heuristicKind(content, eventAt, explicit, endAt, now);
   const kind: AutoMemoryKind = blocked ? 'ignore' : base.kind;
   const parts = scoreParts(content, kind, base.confidence, explicit, eventAt);
   const rawScore = 0.30 * parts.userRelevance + 0.25 * parts.futureUtility + 0.20 * parts.eventSalience + 0.15 * parts.engagement + 0.10 * parts.confidence;

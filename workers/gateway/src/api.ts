@@ -6,7 +6,7 @@ import { composeTaskAnswer, composeTemporalAnswer, detectChatIntent, isQuestionL
 import { enqueueOllamaChat, enqueueProviderChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
-import { autoCapture } from './auto-memory';
+import { autoCapture, resolveMemoryCaptureTurn } from './auto-memory';
 
 const corsHeaders: HeadersInit = {
   'access-control-allow-origin': '*',
@@ -378,12 +378,14 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000)})).filter(item=>item.text);
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
       const contextualQuery=isBareRecallFieldQuestion(message)&&previousUser?previousUser.text:message;
+      const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
       const intent = detectChatIntent(message);
       const question = isQuestionLike(message);
       let autoMemory: any = null;
       if (!question) {
+        if(memoryTurn.followUp&&!memoryTurn.message)return ok({intent:'remember',answer:'ยังไม่มีข้อความก่อนหน้าที่ชัดเจนให้บันทึกครับ',memory:null,autoMemory:null,mode:'knowledge',provider:'knowledge'});
         try {
-          autoMemory = await autoCapture(env, token, { message, conversationId: body.conversationId, projectId: body.projectId, sourceRef: body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
+          autoMemory = await autoCapture(env, token, { message:memoryTurn.message||message, conversationId: body.conversationId, projectId: body.projectId, sourceRef: body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
           if (autoMemory?.decision?.blocked && autoMemory?.decision?.explicit) return ok({ intent: 'remember', answer: 'ไม่บันทึกข้อความนี้ เพราะตรวจพบข้อมูลลับหรือข้อมูลอ่อนไหว', memory: null, autoMemory });
           const durableWrite=Boolean(autoMemory?.written)&&(Boolean(autoMemory?.decision?.explicit)||(['event','task'].includes(String(autoMemory?.decision?.kind))&&Number(autoMemory?.decision?.confidence||0)>=0.9));
           if(durableWrite){
