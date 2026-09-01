@@ -2,7 +2,7 @@ import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type K
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback, recallSearchQuery } from './chat';
-import { composeDateAnswer, composeTaskAnswer, detectChatIntent, isQuestionLike, memoryLooksLikeQuestion, type DateIntent } from './chat-intelligence';
+import { composeDateAnswer, composeTaskAnswer, dateTextMatchesIntent, detectChatIntent, isQuestionLike, memoryLooksLikeQuestion, type DateIntent } from './chat-intelligence';
 import { enqueueOllamaChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
@@ -65,16 +65,22 @@ async function listToday(env: Env, token: string, url: URL) {
 }
 
 async function dateKnowledge(env: Env, token: string, intent: DateIntent) {
-  const [events,tasks,memories]=await Promise.all([
+  const dayTerm=String(intent.day), textOr=searchOr(['title','content'],dayTerm);
+  const [events,tasks,eventMemories,legacyText,replicaText]=await Promise.all([
     rest<EventRecord[]>(env,token,`events${qs({select:'*',start_at:`gte.${intent.from}`,order:'start_at.asc',limit:50})}`).then(rows=>rows.filter(row=>Date.parse(row.start_at)<=Date.parse(intent.to)&&row.status!=='cancelled')).catch(()=>[]),
-    rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',due_at:`gte.${intent.from}`,order:'due_at.asc.nullslast,updated_at.desc',limit:50})}`).then(rows=>rows.filter(row=>!row.due_at||Date.parse(row.due_at)<=Date.parse(intent.to))).catch(()=>[]),
-    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,reference_path,updated_at',node_type:'eq.memory',event_at:`gte.${intent.from}`,order:'event_at.asc',limit:50})}`).then(rows=>rows.filter(row=>row.event_at&&Date.parse(row.event_at)<=Date.parse(intent.to)&&!memoryLooksLikeQuestion(row))).catch(()=>[]),
+    rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',due_at:`gte.${intent.from}`,order:'due_at.asc.nullslast,updated_at.desc',limit:50})}`).then(rows=>rows.filter(row=>Boolean(row.due_at)&&Date.parse(String(row.due_at))<=Date.parse(intent.to))).catch(()=>[]),
+    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',event_at:`gte.${intent.from}`,order:'event_at.asc',limit:50})}`).then(rows=>rows.filter(row=>row.event_at&&Date.parse(row.event_at)<=Date.parse(intent.to)&&!memoryLooksLikeQuestion(row))).catch(()=>[]),
+    rest<any[]>(env,token,`memories${qs({select:'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at',status:'eq.active',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:80})}`).catch(()=>[]),
+    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:80})}`).catch(()=>[]),
   ]);
-  const seen=new Set<string>();
-  const uniq=(rows:any[])=>rows.filter(row=>{const key=clean(row.title||row.content||row.id||row.node_id,500).toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true});
-  return {events:uniq(events),tasks:uniq(tasks),memories:uniq(memories)};
-}
-async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
+  const mirrored=new Set(replicaText.flatMap(row=>Array.isArray(row.source_refs)?row.source_refs:[]));
+  const textual=[...replicaText,...legacyText.filter(row=>!mirrored.has(String(row.id||'')))]
+    .filter(row=>!memoryLooksLikeQuestion(row))
+    .filter(row=>dateTextMatchesIntent(`${clean(row.title,500)} ${clean(row.content,5000)}`,intent));
+  const memorySeen=new Set<string>(),memories=[...eventMemories,...textual].filter(row=>{const key=clean(row.node_id||row.id||row.title||row.content,500).toLocaleLowerCase();if(!key||memorySeen.has(key))return false;memorySeen.add(key);return true});
+  const uniq=(rows:any[])=>{const seen=new Set<string>();return rows.filter(row=>{const key=clean(row.id||row.title||row.content,500).toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true})};
+  return {events:uniq(events),tasks:uniq(tasks),memories};
+}async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
   const perTable = Math.max(5, Math.min(25, limit * 2));

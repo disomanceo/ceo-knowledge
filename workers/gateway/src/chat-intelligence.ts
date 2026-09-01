@@ -32,7 +32,7 @@ export function parseDateIntent(input:string,now=new Date()):DateIntent|null{
   else if(/(?:เมื่อวาน|yesterday)/i.test(t)){const x=new Date(Date.UTC(bp.year,bp.month-1,bp.day-1));y=x.getUTCFullYear();m=x.getUTCMonth()+1;d=x.getUTCDate()}
   else {
     const monthAlt=Object.keys(THAI_MONTHS).sort((a,b)=>b.length-a.length).map(reEscape).join('|');
-    const dateCue=new RegExp('(?:วันที่\\s*\\d{1,2}|\\d{1,2}\\s*(?:'+monthAlt+'|[/-]\\d{1,2}))','i');
+    const dateCue=new RegExp('(?:วันที่\\s*\\d{1,2}|^\\s*\\d{1,2}\\s*(?:มีอะไร|มีงาน|มีนัด|มีเรื่อง|อะไรไหม)|\\d{1,2}\\s*(?:'+monthAlt+'|[/-]\\d{1,2}))','i');
     if(!dateCue.test(t))return null;
     const full=t.match(new RegExp('(?:วันที่\\s*)?(\\d{1,2})\\s*(?:(' + monthAlt + '|\\d{1,2})\\s*(?:พ\\.?ศ\\.?\\s*)?(\\d{2,4})?)?','i'));
     if(!full)return null;d=Number(full[1]);if(!d||d>31)return null;
@@ -44,6 +44,18 @@ export function parseDateIntent(input:string,now=new Date()):DateIntent|null{
   const check=new Date(Date.UTC(y,m-1,d));if(check.getUTCDate()!==d||check.getUTCMonth()+1!==m)return null;
   const r=dayRange(y,m,d),label=new Intl.DateTimeFormat('th-TH',{day:'numeric',month:'short',year:'numeric',timeZone:'Asia/Bangkok'}).format(new Date(r.from));
   return{kind:'date',...r,label,day:d,month:m,year:y};
+}
+
+export function dateTextMatchesIntent(input:string,intent:DateIntent){
+  const t=clean(input);if(!t)return false;
+  const monthAliases=Object.entries(THAI_MONTHS).filter(([,value])=>value===intent.month).map(([key])=>reEscape(key));
+  monthAliases.push(String(intent.month),String(intent.month).padStart(2,'0'));
+  const monthAlt=[...new Set(monthAliases)].sort((a,b)=>b.length-a.length).join('|');
+  const be=intent.year+543,day=String(intent.day),day2=day.padStart(2,'0'),month2=String(intent.month).padStart(2,'0');
+  const thai=new RegExp(`(?:วันที่\\s*)?(?:${day2}|${day})\\s*(?:${monthAlt})(?:\\s*(?:พ\\.?ศ\\.?\\s*)?(?:${be}|${intent.year}))?`,'i');
+  const slash=new RegExp(`(?:^|\\D)(?:${day2}|${day})[/-](?:${month2}|${intent.month})(?:[/-](?:${be}|${intent.year}))?(?:\\D|$)`,'i');
+  const iso=new RegExp(`(?:^|\\D)${intent.year}-${month2}-${day2}(?:\\D|$)`);
+  return thai.test(t)||slash.test(t)||iso.test(t);
 }
 
 export function detectChatIntent(input:string,now=new Date()):ChatIntent{
