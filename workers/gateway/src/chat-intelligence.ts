@@ -23,7 +23,7 @@ const thaiDate=(value:Date,opts:Intl.DateTimeFormatOptions)=>new Intl.DateTimeFo
 export function isQuestionLike(input:string){
   const t=clean(input).replace(/[?？]+$/,'').trim();
   return /[?？]\s*$/.test(input)
-    ||/(?:ไหม|หรือไม่|หรือยัง|รึยัง|หรือเปล่า|มั้ย|อะไร|อะไรบ้าง|ใคร|ที่ไหน|เมื่อไหร่|เมื่อไร|อย่างไร|ยังไง|เท่าไร|กี่)\s*$/i.test(t)
+    ||/(?:ไหม|หรือไม่|หรือยัง|รึยัง|หรือเปล่า|มั้ย|อะไร|อะไรบ้าง|ใคร|ที่ไหน|วันไหน|วันอะไร|เมื่อไหร่|เมื่อไร|กี่โมง|เวลาไหน|อย่างไร|ยังไง|เท่าไร|กี่)\s*$/i.test(t)
     ||/^(?:อะไร|ใคร|ที่ไหน|เมื่อไหร่|เมื่อไร|ทำไม|อย่างไร|ยังไง|what|who|where|when|why|how)\b/i.test(t);
 }
 
@@ -70,7 +70,7 @@ export function extractTemporalTopic(input:string){
     /(?:สัปดาห์|อาทิตย์)(?:นี้|หน้า|ก่อน|ที่แล้ว)/g,
     /เดือน(?:นี้|หน้า|ก่อน|ที่แล้ว)/g,
     /ปี(?:นี้|หน้า|ก่อน|ที่แล้ว)/g,
-    new RegExp('(?:เดือน\\s*)?(?:'+monthAlt+')(?:\\s*(?:พ\\.?ศ\\.?\\s*)?\\d{2,4})?','ig'),
+    new RegExp('(?:เดือน\\s*(?:'+monthAlt+')|(?:^|\\s)(?:'+monthAlt+')(?=\\s|$|มี|อะไร|งาน|นัด|กิจกรรม))(?:\\s*(?:พ\\.?ศ\\.?\\s*)?\\d{2,4})?','ig'),
     /(?:พ\.?ศ\.?\s*)?\b(?:25\d{2}|20\d{2})\b/g,
     /(?:อีก|ภายใน)\s*\d{1,3}\s*(?:วัน|สัปดาห์|เดือน)/g,
     /\d{1,3}\s*(?:วัน|สัปดาห์|เดือน)\s*(?:ข้างหน้า|ถัดไป)/g,
@@ -99,7 +99,9 @@ export function parseTemporalIntent(input:string,now=new Date()):TemporalIntent|
     if(forward){const n=Number(forward[1]||forward[3]),unit=forward[2]||forward[4];if(n>0&&n<=366){const from=localStartUtc(bp.year,bp.month,bp.day);let to:Date;if(unit==='วัน')to=new Date(from.getTime()+(n+1)*86400000-1);else if(unit==='สัปดาห์')to=new Date(from.getTime()+(n*7+1)*86400000-1);else {const end=new Date(Date.UTC(bp.year,bp.month-1+n,bp.day+1,-7,0,0,0)-1);to=end}r=range(from,to);label=`${n} ${unit}ข้างหน้า`;granularity='range'}}
     if(!r){
       const monthAlt=Object.keys(THAI_MONTHS).sort((a,b)=>b.length-a.length).map(reEscape).join('|');
-      const mm=t.match(new RegExp('(?:เดือน\\s*)?('+monthAlt+')(?:\\s*(?:พ\\.?ศ\\.?\\s*)?(\\d{2,4}))?','i'));
+      const explicitMonth=t.match(new RegExp('เดือน\\s*('+monthAlt+')(?:\\s*(?:พ\\.?ศ\\.?\\s*)?(\\d{2,4}))?','i'));
+      const bareMonth=explicitMonth?null:t.match(new RegExp('(?:^|\\s)('+monthAlt+')(?:\\s*(?:พ\\.?ศ\\.?\\s*)?(\\d{2,4}))?(?=\\s|$|มี|อะไร|งาน|นัด|กิจกรรม)','i'));
+      const mm=explicitMonth||bareMonth;
       if(mm?.[1]){const matchedMonth=THAI_MONTHS[mm[1].replace(/\.$/,'')]||0;if(matchedMonth){let parsedYear=mm[2]?Number(mm[2]):bp.year;if(parsedYear<100)parsedYear+=2500;if(parsedYear>2400)parsedYear-=543;year=parsedYear;month=matchedMonth;r=monthRange(parsedYear,matchedMonth);label=`เดือน${MONTH_NAMES[matchedMonth-1]} ${parsedYear+543}`;granularity='month'}}
     }
     if(!r){const yy=t.match(/(?:ปี|พ\.?ศ\.?\s*)(\d{4})/);if(yy){year=Number(yy[1]);if(year>2400)year-=543;if(year>=1900&&year<=2200){r=yearRange(year);label=`ปี ${year+543}`;granularity='year'}}}

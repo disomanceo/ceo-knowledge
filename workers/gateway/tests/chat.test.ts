@@ -5,6 +5,8 @@ describe('cloud chat fallback',()=>{
   it('strips Thai recall question tails for Knowledge search',()=>{
     expect(recallSearchQuery('เมื่อวานกินข้าวกับอะไร')).toBe('เมื่อวานกินข้าวกับ');
     expect(recallSearchQuery('ไปกับใคร?')).toBe('ไปกับ');
+    expect(recallSearchQuery('ดูภาพยนต์วันไหน')).toBe('ดูภาพยนต์');
+    expect(recallSearchQuery('งาน PA กี่โมง')).toBe('งาน PA');
   });
   it('answers greetings without pretending Knowledge is missing',()=>{
     expect(cloudChatFallback('สวัสดี',[])).toContain('Ceo พร้อม');
@@ -30,5 +32,10 @@ describe('cloud chat fallback',()=>{
     const answer=cloudChatFallback('runtime',[{title:'Runtime Plan',summary:'ทดสอบระบบ Runtime'}]);
     expect(answer).toContain('Runtime Plan');
     expect(answer).not.toContain('ระบบไม่ได้เสีย');
+  });
+  it('formats structured event recall with its Bangkok date',()=>{
+    const answer=cloudChatFallback('ดูภาพยนต์วันไหน',[{kind:'events',title:'พานักเรียนไปดูภาพยนตร์ที่ Big C สุพรรณบุรี',start_at:'2026-09-06T17:00:00.000Z',all_day:true,location:'Big C สุพรรณบุรี'}]);
+    expect(answer).toContain('7 กันยายน 2569');
+    expect(answer).toContain('Big C สุพรรณบุรี');
   });
 });

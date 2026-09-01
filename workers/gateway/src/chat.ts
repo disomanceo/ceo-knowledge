@@ -2,7 +2,7 @@ const clean=(value:unknown,max=6000)=>String(value??'').replace(/\u0000/g,'').tr
 
 export function recallSearchQuery(message:string):string {
   const text=clean(message,4000);
-  const stripped=text.replace(/[?？]/g,' ').replace(/(?:อะไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่|ยังไง|อย่างไร|เท่าไร|กี่|what|who|where|when|how)\s*$/i,'').replace(/\s+/g,' ').trim();
+  const stripped=text.replace(/[?？]/g,' ').replace(/(?:อะไรบ้าง|อะไร|ใคร|ที่ไหน|วันไหน|วันอะไร|เมื่อไร|เมื่อไหร่|กี่โมง|เวลาไหน|ยังไง|อย่างไร|เท่าไร|กี่|what|who|where|when|how)\s*$/i,'').replace(/\s+/g,' ').trim();
   return stripped.length>=4?stripped:text;
 }
 
@@ -11,6 +11,15 @@ export function cloudChatFallback(message:string, results:any[]):string {
   const rows=Array.isArray(results)?results:[];
   if(rows.length){
     const first=rows[0]||{},title=clean(first?.title||'ข้อมูลที่พบ',180),body=clean(first?.content||first?.summary||first?.rationale||'',700);
+    if(first?.kind==='events'&&first?.start_at){
+      const when=new Intl.DateTimeFormat('th-TH',{timeZone:'Asia/Bangkok',day:'numeric',month:'long',year:'numeric'}).format(new Date(first.start_at));
+      const time=first?.all_day?'':new Date(first.start_at).toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit'});
+      return `พบกิจกรรม “${title}” วันที่ ${when}${time?` เวลา ${time} น.`:''}${first?.location?` ที่ ${clean(first.location,200)}`:''}`;
+    }
+    if(first?.kind==='tasks'){
+      const due=first?.due_at?new Intl.DateTimeFormat('th-TH',{timeZone:'Asia/Bangkok',day:'numeric',month:'long',year:'numeric'}).format(new Date(first.due_at)):'';
+      return `พบงาน “${title}”${due?` กำหนดวันที่ ${due}`:''}${body&&body.toLocaleLowerCase()!==title.toLocaleLowerCase()?` — ${body}`:''}`;
+    }
     const main=body&&body.toLocaleLowerCase()!==title.toLocaleLowerCase()?`${title} — ${body}`:title;
     const related=rows.slice(1,4).map((item:any)=>clean(item?.title||'',120)).filter(Boolean);
     return `จากความจำที่ตรงที่สุด: ${main}${related.length?`\nมีข้อมูลที่เกี่ยวข้องอีก ${rows.length-1} รายการ เช่น ${related.join(', ')}`:''}`;

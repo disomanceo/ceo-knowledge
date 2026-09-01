@@ -87,6 +87,7 @@ async function temporalKnowledge(env: Env, token: string, intent: TimeIntent) {
 async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
+  const recallTerms = [...new Set(recallQ.split(/\s+/).filter(Boolean).flatMap(token => token.length >= 6 ? [token, token.slice(0, -1)] : [token]))].join(' ');
   const perTable = Math.max(5, Math.min(25, limit * 2));
   const specs = [
     ['memories', ['title', 'content'], 'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at'],
@@ -96,17 +97,25 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   ] as const;
   const rows: any[] = [];
   for (const [table, fields, select] of specs) {
-    const or = recallQ ? searchOr([...fields], recallQ) : '';
+    const or = recallTerms ? searchOr([...fields], recallTerms) : '';
     const found = await rest<any[]>(env, token, `${table}${qs({ select, status: 'eq.active', ...(or ? { or } : {}), order: 'updated_at.desc', limit: perTable })}`).catch(() => []);
     rows.push(...found.map(row => ({ ...row, kind: table })));
   }
-  const replicaOr = recallQ ? searchOr(['title','content'], recallQ) : '';
+  const eventOr = recallTerms ? searchOr(['title','description','location'], recallTerms) : '';
+  const taskOr = recallTerms ? searchOr(['title','description','waiting_for'], recallTerms) : '';
+  const [eventRows, taskRows] = await Promise.all([
+    eventOr ? rest<any[]>(env, token, `events${qs({ select:'*', status:'neq.cancelled', or:eventOr, order:'start_at.asc', limit:perTable })}`).catch(() => []) : Promise.resolve([]),
+    taskOr ? rest<any[]>(env, token, `tasks${qs({ select:'*', status:'neq.cancelled', or:taskOr, order:'due_at.asc.nullslast,updated_at.desc', limit:perTable })}`).catch(() => []) : Promise.resolve([]),
+  ]);
+  rows.push(...eventRows.map(row => ({ ...row, kind:'events', content:clean([row.description,row.location,row.start_at].filter(Boolean).join(' · '),5000), importance:2, updated_at:row.updated_at || row.start_at || row.created_at })));
+  rows.push(...taskRows.map(row => ({ ...row, kind:'tasks', content:clean([row.description,row.waiting_for,row.due_at].filter(Boolean).join(' · '),5000), importance:2 })));
+  const replicaOr = recallTerms ? searchOr(['title','content'], recallTerms) : '';
   const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
   const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
   const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')) && !(row.kind === 'memories' && memoryLooksLikeQuestion(row)));
   rows.length = 0;
   rows.push(...legacyOnly, ...replicaRows.filter(row => !memoryLooksLikeQuestion(row)).map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
-  const tokens = recallQ.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const tokens = recallTerms.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const ranked = rows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
     const body = clean(row.content || row.summary || row.rationale || '', 5000).toLocaleLowerCase();

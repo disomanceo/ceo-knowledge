@@ -2,7 +2,7 @@ import { describe,expect,it } from 'vitest';
 import { composeDateAnswer,dateTextMatchesIntent,detectChatIntent,extractTemporalTopic,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent,parseTemporalIntent,temporalTextMatchesIntent } from '../src/chat-intelligence';
 const now=new Date('2026-09-01T04:40:00.000Z');
 describe('chat intelligence',()=>{
- it('recognizes Thai question without question mark',()=>{expect(isQuestionLike('วันที่ 18 มีอะไรไหม')).toBe(true);expect(memoryLooksLikeQuestion({content:'Memory: วันที่ 18 มีอะไรไหม'})).toBe(true)});
+ it('recognizes Thai question without question mark',()=>{expect(isQuestionLike('วันที่ 18 มีอะไรไหม')).toBe(true);expect(isQuestionLike('ดูภาพยนต์วันไหน')).toBe(true);expect(memoryLooksLikeQuestion({content:'Memory: วันที่ 18 มีอะไรไหม'})).toBe(true)});
  it('resolves day-only date to current/upcoming Bangkok month',()=>{const x=parseDateIntent('วันที่ 18 มีอะไรไหม',now)!;expect(x.from).toBe('2026-09-17T17:00:00.000Z');expect(x.to).toBe('2026-09-18T16:59:59.999Z')});
  it('resolves explicit Thai Buddhist date',()=>{const x=parseDateIntent('18 ก.ย. 2569 มีอะไร',now)!;expect(x.year).toBe(2026);expect(x.month).toBe(9);expect(x.day).toBe(18)});
  it('routes date before generic recall',()=>{expect(detectChatIntent('วันที่ 18 มีอะไรไหม',now).kind).toBe('date');expect(detectChatIntent('งานค้างมีอะไรบ้าง',now).kind).toBe('tasks')});
@@ -66,5 +66,20 @@ describe('structured chat retrieval',()=>{
    });
    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เดือนนี้มีงานเกษียณอะไรบ้าง'})}),apiEnv),payload:any=await response.json();
    expect(payload.data.intent).toBe('temporal');expect(payload.data.range.granularity).toBe('month');expect(payload.data.answer).toContain('งานเลี้ยงเกษียณ ผอ. เผือก');expect(payload.data.answer).toContain('งานเกษียณ ผอ. เผือก ที่โรงเรียน');expect(payload.data.answer).not.toContain('ประชุมครู');expect(payload.data.answer).not.toContain('เดือนตุลาคม');
+ });
+});
+
+describe('topic recall across structured secretary data',()=>{
+ afterEach(()=>vi.unstubAllGlobals());
+ it('answers ดูภาพยนต์วันไหน from Events and does not save the question',async()=>{
+   const calls:string[]=[];vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);calls.push(decodeURIComponent(url));
+     if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
+     if(url.includes('/rest/v1/events?'))return json([{id:'e7',title:'พานักเรียนไปดูภาพยนตร์ที่ Big C สุพรรณบุรี',description:'วันที่ 7 กันยายน 2569 พานักเรียนไปดูภาพยนตร์',event_type:'activity',start_at:'2026-09-06T17:00:00.000Z',end_at:null,all_day:true,timezone:'Asia/Bangkok',location:'Big C สุพรรณบุรี',status:'planned',priority:'normal',updated_at:'2026-09-01T07:11:41.000Z'}]);
+     if(url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/conversation_summaries?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/memory_nodes?')||url.includes('/rest/v1/devices?'))return json([]);
+     throw new Error('unexpected '+url);
+   });
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'ดูภาพยนต์วันไหน'})}),apiEnv),payload:any=await response.json();
+   expect(payload.data.intent).toBe('recall');expect(payload.data.answer).toContain('7 กันยายน 2569');expect(payload.data.answer).toContain('Big C สุพรรณบุรี');expect(payload.data.autoMemory).toBeNull();
+   expect(calls.some(x=>x.includes('/rest/v1/events?'))).toBe(true);expect(calls.some(x=>x.includes('memory_replica_apply'))).toBe(false);
  });
 });
