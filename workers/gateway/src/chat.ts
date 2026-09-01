@@ -35,7 +35,12 @@ export function isBareRecallFieldQuestion(message:string):boolean {
 export function recallSearchQuery(message:string):string {
   const text=clean(message,4000);
   const stripped=recallSubjectQuery(text);
-  return stripped.length>=2?stripped:text.replace(/[?？]/g,' ').replace(/\s+/g,' ').trim();
+  let subject=stripped;
+  if(recallAnswerField(text)==='date'){
+    subject=subject.replace(/^วัน(?:ที่)?(?=\S)/u,'').trim();
+    if(/^ทุน(?=\S)/u.test(subject))subject=subject.replace(/^ทุน(?=\S)/u,'ทุน ');
+  }
+  return subject.length>=2?subject:text.replace(/[?？]/g,' ').replace(/\s+/g,' ').trim();
 }
 
 function thaiDate(value:unknown):string {

@@ -14,6 +14,7 @@ describe('cloud chat fallback',()=>{
     expect(recallAnswerField('วันไหนบ้าง')).toBe('date');
     expect(isBareRecallFieldQuestion('วันไหนบ้าง')).toBe(true);
     expect(recallSearchQuery('งาน PA กี่โมง')).toBe('งาน PA');
+    expect(recallSearchQuery('วันทุนปตท วันไหน')).toBe('ทุน ปตท');
     expect(recallSubjectQuery('ที่ไหน')).toBe('');
     expect(isBareRecallFieldQuestion('ที่ไหน')).toBe(true);
   });
