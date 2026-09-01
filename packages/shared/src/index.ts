@@ -18,6 +18,7 @@ export const REMOTE_SAFE_TOOLS = [
   'filesystem.read',
   'ollama.status',
   'ollama.chat',
+  'provider.chat',
 ] as const;
 
 export type RemoteSafeTool = typeof REMOTE_SAFE_TOOLS[number];

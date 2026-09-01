@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildOllamaChatPrompt, deviceSupportsOllama, ollamaJobAnswer, selectOllamaDevice } from '../src/runtime-chat';
+import { buildOllamaChatPrompt, deviceSupportsOllama, deviceSupportsProviderChat, ollamaJobAnswer, providerJobAnswer, selectOllamaDevice, selectProviderChatDevice } from '../src/runtime-chat';
 
 describe('Ollama runtime chat router',()=>{
   const base={trusted:true,status:'online',last_seen_at:new Date().toISOString(),capabilities:{remoteTools:['runtime.status','ollama.chat']}};
@@ -18,6 +18,13 @@ describe('Ollama runtime chat router',()=>{
     expect(deviceSupportsOllama({...base,status:'disabled'},now)).toBe(false);
     expect(deviceSupportsOllama({...base,trusted:false},now)).toBe(false);
   });
+  it('selects only trusted online devices that expose provider.chat',()=>{
+    const now=Date.now();
+    const providerBase={...base,capabilities:{remoteTools:['runtime.status','provider.chat']}};
+    expect(deviceSupportsProviderChat(providerBase,now)).toBe(true);
+    expect(deviceSupportsProviderChat({...providerBase,trusted:false},now)).toBe(false);
+    expect(selectProviderChatDevice([{...providerBase,id:'provider'},{...base,id:'ollama'}],now)?.id).toBe('provider');
+  });
   it('builds a bounded Ceo Knowledge context without inventing tool execution',()=>{
     const prompt=buildOllamaChatPrompt('ช่วยคิดชื่อโครงการ',[{kind:'knowledge_entries',title:'PMS',content:'ระบบบริหารโรงเรียน',_score:90}],'qwen3:4b');
     expect(prompt).toContain('/no_think');
@@ -32,7 +39,9 @@ describe('Ollama runtime chat router',()=>{
     expect(prompt).not.toContain('/no_think');
   });
 
-  it('extracts completed ollama job answers and rejects unavailable results',()=>{
+  it('extracts completed provider and ollama job answers and rejects unavailable results',()=>{
+    expect(providerJobAnswer({status:'completed',result:{available:true,response:'ตอบผ่าน Gemini',provider:'gemini',model:'gemini-3.6-flash'}})).toEqual({ok:true,answer:'ตอบผ่าน Gemini',provider:'gemini',model:'gemini-3.6-flash',reason:'READY'});
+    expect(providerJobAnswer({status:'failed',error:{message:'provider failed'}}).ok).toBe(false);
     expect(ollamaJobAnswer({status:'completed',result:{available:true,response:'สวัสดีครับ',model:'qwen3:4b'}})).toEqual({ok:true,answer:'สวัสดีครับ',provider:'ollama',model:'qwen3:4b',reason:'READY'});
     expect(ollamaJobAnswer({status:'completed',result:{available:false,reason:'OLLAMA_MODEL_NOT_INSTALLED',model:'x'}}).ok).toBe(false);
     expect(ollamaJobAnswer({status:'running'}).ok).toBe(false);

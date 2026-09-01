@@ -3,7 +3,7 @@ import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprov
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
 import { cloudChatFallback, recallSearchQuery } from './chat';
 import { composeTaskAnswer, composeTemporalAnswer, detectChatIntent, isQuestionLike, memoryLooksLikeQuestion, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
-import { enqueueOllamaChat } from './runtime-chat';
+import { enqueueOllamaChat, enqueueProviderChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture } from './auto-memory';
@@ -404,6 +404,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       const search = await searchKnowledge(env, token, message, 8);
       const fallbackAnswer = cloudChatFallback(message, search.results);
+      const routed = await enqueueProviderChat(env, token, message, search.results).catch(() => null);
+      if (routed?.job?.id) return ok({ intent: 'runtime-provider', answer: 'กำลังส่งคำถามให้ Ceo Auto Router…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'runtime-provider-pending', provider: 'auto', jobId: routed.job.id, device: routed.device, autoMemory });
       const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);
       if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device, autoMemory });
       const llm = await maybeLlm(env, message, search.results);

@@ -9,6 +9,7 @@ describe('shared contracts', () => {
     expect(isRemoteSafeTool('knowledge.semantic_search')).toBe(true);
     expect(isRemoteSafeTool('knowledge.graph')).toBe(true);
     expect(isRemoteSafeTool('knowledge.sources')).toBe(true);
+    expect(isRemoteSafeTool('provider.chat')).toBe(true);
     expect(isRemoteSafeTool('knowledge.ingest_file')).toBe(false);
     expect(isRemoteSafeTool('knowledge.local_notes_scan')).toBe(false);
     expect(isRemoteSafeTool('knowledge.local_notes_import')).toBe(false);

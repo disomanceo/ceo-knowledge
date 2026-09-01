@@ -63,7 +63,7 @@ function Login({ onReady }: { onReady: () => void }) {
 function ChatPage() {
   const conversationId=useRef('mobile:'+crypto.randomUUID()).current;
   const [message, setMessage] = useState('');
-  const [items, setItems] = useState<ChatItem[]>([{ role:'ceo', text:'Chat สำรองพร้อมครับ ถ้าเครื่อง Ceo Online ระบบจะใช้ Ollama; งานสนทนาหลักให้ใช้ ChatGPT และให้ Ceo ทำหน้าที่เป็นเครื่องมือ/ความจำ/Remote Runtime', meta:'FALLBACK AI' }]);
+  const [items, setItems] = useState<ChatItem[]>([{ role:'ceo', text:'Ceo Chat พร้อมครับ ถ้าเครื่อง Ceo Online และ Trusted ระบบจะส่งคำถามเข้า Auto Router เพื่อเลือก Gemini / Claude / OpenAI / Ollama ตามความพร้อม แล้วใช้ Ceo Knowledge เป็นบริบท', meta:'AUTO ROUTER' }]);
   const [busy,setBusy]=useState(false);
   const [provider,setProvider]=useState('AUTO · READY');
   const [thinking,setThinking]=useState('Ceo กำลังค้นความจำ…');
@@ -72,7 +72,26 @@ function ChatPage() {
     setMessage(''); setItems(v=>[...v,{role:'user',text}]); setBusy(true); setThinking('Ceo กำลังเลือก Provider…');
     try {
       const r=await api.chat(text,conversationId);
-      if(r?.mode==='ollama-pending'&&r?.jobId){
+      if(r?.mode==='runtime-provider-pending'&&r?.jobId){
+        const device=String(r.device?.name||'Ceo Runtime');
+        setProvider('AUTO · RUNTIME');
+        setThinking('Ceo Auto Router บน '+device+' กำลังเลือก Model…');
+        const job=await waitForRuntimeJob(String(r.jobId));
+        const result=job?.result&&typeof job.result==='object'?job.result:{};
+        const answer=String(result?.response||'').trim();
+        if(job?.status==='completed'&&result?.available!==false&&answer){
+          const actualProvider=String(result?.provider||'auto').toUpperCase();
+          const actualModel=String(result?.model||'').trim();
+          const routeLabel=[actualProvider,actualModel].filter(Boolean).join(' · ');
+          setProvider('AUTO · '+routeLabel);
+          setItems(v=>[...v,{role:'ceo',text:answer,meta:routeLabel}]);
+        } else {
+          const fallback=String(r.fallbackAnswer||'Ceo Runtime ยังตอบไม่ได้ในรอบนี้ และไม่พบคำตอบสำรองจาก Ceo Knowledge');
+          const reason=String(result?.reason||job?.error?.message||job?.status||'PROVIDER_UNAVAILABLE');
+          setProvider('AUTO · KNOWLEDGE FALLBACK');
+          setItems(v=>[...v,{role:'ceo',text:fallback,meta:'KNOWLEDGE FALLBACK · '+reason}]);
+        }
+      } else if(r?.mode==='ollama-pending'&&r?.jobId){
         const model=String(r.model||'qwen3:4b');
         const device=String(r.device?.name||'Ceo Runtime');
         setProvider('AUTO · OLLAMA '+model);

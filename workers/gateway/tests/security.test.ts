@@ -6,6 +6,7 @@ describe('gateway security', () => {
   it('allows only the bounded remote tool contract', () => {
     expect(() => assertRemoteTool('runtime.status')).not.toThrow();
     expect(() => assertRemoteTool('filesystem.read')).not.toThrow();
+    expect(() => assertRemoteTool('provider.chat')).not.toThrow();
     expect(() => assertRemoteTool('process.run')).toThrow(/REMOTE_TOOL_NOT_ALLOWED/);
     expect(() => assertRemoteTool('shell.execute')).toThrow(/REMOTE_TOOL_NOT_ALLOWED/);
   });
