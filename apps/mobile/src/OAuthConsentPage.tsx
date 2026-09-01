@@ -20,6 +20,7 @@ const scopeLabel = (scope: string) => {
   if (scope === 'email') return 'ยืนยันอีเมลของบัญชี Ceo เพื่อจับคู่กับเครื่อง';
   if (scope === 'profile') return 'ข้อมูลโปรไฟล์พื้นฐาน';
   if (scope === 'openid') return 'ยืนยันตัวตนของบัญชี Ceo';
+  if (scope === 'offline_access') return 'อนุญาตให้แอปต่ออายุการเชื่อมต่อโดยไม่ต้องเข้าสู่ระบบใหม่ทุกครั้ง';
   return scope;
 };
 
@@ -40,7 +41,7 @@ export default function OAuthConsentPage({ session, onSessionReady }: Props) {
     async function loadDetails() {
       if (!authorizationId) {
         if (!cancelled) {
-          setError('ไม่พบ authorization_id กรุณาเริ่มเชื่อมต่อใหม่จาก Claude');
+          setError('ไม่พบ authorization_id กรุณาเริ่มเชื่อมต่อใหม่จากแอป');
           setLoading(false);
         }
         return;
@@ -113,10 +114,10 @@ export default function OAuthConsentPage({ session, onSessionReady }: Props) {
       <section className="w-full max-w-md card p-6 oauth-card">
         <div className="flex items-center gap-3 mb-6">
           <div className="w-12 h-12 rounded-2xl bg-[#f4c95d] text-black grid place-items-center"><Brain /></div>
-          <div><h1 className="text-2xl font-bold">Connect Claude to Ceo</h1><p className="muted text-sm">OAuth 2.1 Authorization</p></div>
+          <div><h1 className="text-2xl font-bold">Connect App to Ceo</h1><p className="muted text-sm">OAuth 2.1 Authorization</p></div>
         </div>
-        <div className="oauth-security-note mb-4"><ShieldCheck size={18}/><span>ใช้บัญชี Ceo เดียวกับเครื่องที่ต้องการควบคุม</span></div>
-        {!authorizationId && <div className="oauth-error mb-3">ไม่พบ authorization_id กรุณาเริ่มเชื่อมต่อใหม่จาก Claude</div>}
+        <div className="oauth-security-note mb-4"><ShieldCheck size={18}/><span>ใช้บัญชี Ceo เดียวกับข้อมูลและอุปกรณ์ที่ต้องการเข้าถึง</span></div>
+        {!authorizationId && <div className="oauth-error mb-3">ไม่พบ authorization_id กรุณาเริ่มเชื่อมต่อใหม่จากแอป</div>}
         <div className="space-y-3">
           <input className="input" value={email} onChange={e=>setEmail(e.target.value)} placeholder="อีเมล Ceo" type="email" autoComplete="email" />
           <input className="input" value={password} onChange={e=>setPassword(e.target.value)} placeholder="รหัสผ่าน" type="password" autoComplete="current-password" onKeyDown={e=>e.key==='Enter'&&void login()} />
@@ -133,17 +134,17 @@ export default function OAuthConsentPage({ session, onSessionReady }: Props) {
     <section className="w-full max-w-lg card p-6 oauth-card">
       <div className="flex items-center gap-3 mb-6">
         <div className="w-12 h-12 rounded-2xl bg-[#f4c95d] text-black grid place-items-center"><Brain /></div>
-        <div><h1 className="text-2xl font-bold">อนุญาต Claude เชื่อมต่อ Ceo</h1><p className="muted text-sm">Ceo Remote MCP · OAuth 2.1 + PKCE</p></div>
+        <div><h1 className="text-2xl font-bold">อนุญาตแอปเชื่อมต่อ Ceo</h1><p className="muted text-sm">Ceo Cloud / Remote MCP · OAuth 2.1 + PKCE</p></div>
       </div>
       {loading && <div className="oauth-loading">กำลังตรวจสอบคำขอ OAuth…</div>}
       {!loading && error && <div className="oauth-error mb-4">{error}</div>}
       {!loading && details && <>
         <div className="oauth-client mb-4">
           <div className="text-xs muted mb-1">แอปที่ขอเชื่อมต่อ</div>
-          <div className="text-xl font-bold">{details.client.name || 'Claude'}</div>
+          <div className="text-xl font-bold">{details.client.name || 'MCP Client'}</div>
           {details.client.uri && <div className="text-xs muted mt-1 break-all">{details.client.uri}</div>}
         </div>
-        <div className="oauth-security-note mb-4"><ShieldCheck size={18}/><span>Claude เรียก Tools ผ่าน Ceo เท่านั้น และยังต้องผ่าน Permission / Security Guard ของ Ceo</span></div>
+        <div className="oauth-security-note mb-4"><ShieldCheck size={18}/><span>แอปที่ได้รับอนุญาตจะเรียกเฉพาะ Ceo Tools ตามสิทธิ์ของบัญชีนี้ และข้อมูลยังถูกจำกัดด้วย RLS / Security Guard</span></div>
         <div className="mb-5">
           <div className="font-semibold mb-2">สิทธิ์ที่ขอ</div>
           <div className="space-y-2">

@@ -20,6 +20,8 @@ Ceo Local Notes is Ceo-owned Markdown workspace functionality and does not depen
 ## Production endpoints
 
 - Worker API: `https://ceo.disomanceo.workers.dev`
+- Cloud MCP (ChatGPT/compatible clients): `https://ceo.disomanceo.workers.dev/mcp`
+- OAuth protected-resource metadata: `https://ceo.disomanceo.workers.dev/.well-known/oauth-protected-resource/mcp`
 - Mobile PWA: `https://ceo-knowledge.pages.dev`
 - Supabase project: Maple (`pcvdtcntyzndhfxfawbo`)
 - Knowledge schema: `ceo_knowledge`
@@ -28,6 +30,7 @@ Ceo Local Notes is Ceo-owned Markdown workspace functionality and does not depen
 
 - V1.0 Secretary Brain: implemented and proven.
 - V1.1 Cloud/Mobile foundation: deployed; Mobile is positioned as Remote Console + Secretary Dashboard rather than a ChatGPT replacement.
+- Cloud MCP: OAuth 2.1 protected resource for ChatGPT/compatible MCP clients, backed by Maple RLS and usable for cloud Memory/Today/Tasks/Events even when the PC is offline.
 - V1.2 Remote Runtime foundation: database + Device Agent E2E proven.
 - V2.0 Knowledge Expansion: file ingestion, 768-d semantic search, Hybrid Recall, semantic Graph auto-linking and Ceo Local Notes are E2E proven. Mobile Graph visualization is implemented and verified with direct Supabase RLS reads. Ceo Drive V1 is implemented and verified in source; real Google OAuth testing requires enabling the Google provider in Maple.
 

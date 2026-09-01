@@ -6,7 +6,8 @@ import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, dete
 import { enqueueOllamaChat, enqueueProviderChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
-import { autoCapture, resolveMemoryCaptureTurn } from './auto-memory';
+import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
+import { handleMcpRequest, type McpToolCallContext } from './mcp';
 
 const corsHeaders: HeadersInit = {
   'access-control-allow-origin': '*',
@@ -165,7 +166,7 @@ async function saveMemory(env: Env, token: string, body: any) {
     nodeId, nodeType:'memory', referencePath:`ceo://memory/${nodeId}`, title, content, projectId:clean(body.projectId,80),
     memoryKind: memoryType === 'rule' ? 'procedural' : 'semantic', sourceKind:'user', truthStatus:'reported', evidenceStatus:'single_source',
     importance:payload.importance, retentionPolicy:'standard', tier:'hot', topicIds:[], entityIds:[], sourceRefs:[memory.id], derivedFrom:[],
-    eventAt:null, datePrecision:null, revision:1, contentHash, schemaVersion:2, metadata:{ legacyMemoryId:memory.id, origin:'mobile' },
+    eventAt:null, datePrecision:null, revision:1, contentHash, schemaVersion:2, metadata:{ legacyMemoryId:memory.id, origin:clean(body.origin,40)||'mobile' },
   };
   const replica = await rpc<any>(env, token, 'memory_replica_apply', { p_snapshot:snapshot, p_base_revision:0, p_client_event_id:'mem_evt_' + eventDigest.slice(0,24), p_device_id:null });
   return { ...memory, node_id:nodeId, replica };
@@ -229,7 +230,57 @@ async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<str
   } catch { return null; }
 }
 
+async function secretaryCloudQuery(env: Env, token: string, messageRaw: unknown) {
+  const message=clean(messageRaw,4000);
+  if(!message)throw Object.assign(new Error('MESSAGE_REQUIRED'),{status:400});
+  const intent=detectChatIntent(message);
+  if(intent.kind==='live')return{intent:'live',answer:'คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต ซึ่งอยู่นอก Ceo Knowledge Cloud MCP ครับ',mode:'knowledge-only'};
+  if(intent.kind==='date'||intent.kind==='temporal'){
+    const temporal=await temporalKnowledge(env,token,intent);
+    return{intent:intent.kind,answer:composeTemporalAnswer(intent,temporal),temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},mode:'knowledge'};
+  }
+  if(intent.kind==='today'){
+    const today=await listToday(env,token,new URL('https://ceo.local/api/today'));
+    return{intent:'today',answer:`วันนี้มี ${today.events.length} นัด/กิจกรรม และมีงานที่ยังเปิดอยู่ ${today.tasks.length} งานครับ`,today,mode:'knowledge'};
+  }
+  if(intent.kind==='tasks'){
+    const tasks=await rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',status:'in.(open,in_progress,waiting,overdue)',order:'due_at.asc.nullslast,updated_at.desc',limit:30})}`);
+    return{intent:'tasks',answer:composeTaskAnswer(tasks),tasks,mode:'knowledge'};
+  }
+  const search=await searchKnowledge(env,token,message,10,recallAnswerField(message));
+  const direct=composeRecallAnswer(message,search.results);
+  return{intent:'recall',answer:direct.answer||cloudChatFallback(message,search.results),search,mode:search.results.length?'knowledge':'knowledge-only'};
+}
+
+async function executeCloudMcpTool(env: Env, context: McpToolCallContext) {
+  const a=context.arguments||{};
+  if(context.name==='ceo_secretary_query')return secretaryCloudQuery(env,context.token,a.message);
+  if(context.name==='ceo_recall')return searchKnowledge(env,context.token,clean(a.query,240),safeLimit(a.limit,10,30));
+  if(context.name==='ceo_today')return listToday(env,context.token,new URL('https://ceo.local/api/today'));
+  if(context.name==='ceo_tasks'){
+    const status=clean(a.status,40),allowed=new Set(['open','in_progress','waiting','completed','cancelled','overdue','suggested']);
+    if(status&&!allowed.has(status))throw Object.assign(new Error('TASK_STATUS_INVALID'),{status:400});
+    const tasks=await rest<TaskRecord[]>(env,context.token,`tasks${qs({select:'*',...(status?{status:`eq.${status}`}:{status:'in.(open,in_progress,waiting,overdue)'}),order:'due_at.asc.nullslast,updated_at.desc',limit:safeLimit(a.limit,30,100)})}`);
+    return{tasks};
+  }
+  if(context.name==='ceo_events'){
+    const from=clean(a.from,100)||new Date(Date.now()-86400000).toISOString(),to=clean(a.to,100)||new Date(Date.now()+31*86400000).toISOString();
+    if(Number.isNaN(Date.parse(from))||Number.isNaN(Date.parse(to))||Date.parse(to)<Date.parse(from))throw Object.assign(new Error('EVENT_RANGE_INVALID'),{status:400});
+    const events=await rest<EventRecord[]>(env,context.token,`events${qs({select:'*',start_at:`gte.${from}`,order:'start_at.asc',limit:safeLimit(a.limit,50,100)})}`);
+    return{from,to,events:events.filter(event=>Date.parse(event.start_at)<=Date.parse(to)&&event.status!=='cancelled')};
+  }
+  if(context.name==='ceo_remember'){
+    const content=clean(a.content,20000);if(!content)throw Object.assign(new Error('MEMORY_CONTENT_REQUIRED'),{status:400});
+    if(containsAutoMemorySecret(content))throw Object.assign(new Error('MEMORY_SECRET_BLOCKED'),{status:400});
+    const memory=await saveMemory(env,context.token,{title:clean(a.title,300)||'จาก ChatGPT Cloud MCP',content,memoryType:'note',importance:Math.max(0,Math.min(3,Math.round(Number(a.importance??2)))),scope:'global',tags:['chatgpt','mcp','cloud'],origin:'chatgpt-mcp'});
+    return{answer:'จำไว้ใน Ceo Knowledge Cloud แล้วครับ',memory};
+  }
+  throw Object.assign(new Error(`MCP_TOOL_NOT_IMPLEMENTED:${context.name}`),{status:404});
+}
+
 export async function handleApi(request: Request, env: Env): Promise<Response> {
+  const mcp=await handleMcpRequest(request,env,context=>executeCloudMcpTool(env,context));
+  if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
   if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: env.LLM_API_KEY ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', time: new Date().toISOString() });

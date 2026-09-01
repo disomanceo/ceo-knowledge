@@ -8,6 +8,24 @@ Ceo Knowledge คือส่วนความจำและเลขาส่
 
 - Ceo Mobile: `https://ceo-knowledge.pages.dev`
 - Cloud API: `https://ceo.disomanceo.workers.dev`
+- Cloud MCP สำหรับ ChatGPT/ไคลเอนต์ MCP: `https://ceo.disomanceo.workers.dev/mcp`
+
+## Ceo Cloud MCP — ใช้ความจำจาก ChatGPT แม้ PC ปิด
+
+Ceo Knowledge มี Remote MCP บน Cloud แล้ว โดยใช้ Supabase Maple เป็น OAuth 2.1 Authorization Server และใช้บัญชี Ceo เดิมในการอนุญาต การเชื่อมต่อนี้ไม่ต้องเปิด Ceo MCP Agent ที่ PC สำหรับงานที่อ่าน/เขียนเฉพาะข้อมูล Cloud
+
+Tools หลักที่เปิดผ่าน Cloud MCP:
+
+- `ceo_secretary_query` — ถามวัน นัด งาน และความจำด้วยภาษาธรรมชาติ
+- `ceo_recall` — ค้น Memory / Event / Task / Decision / Conversation / Knowledge
+- `ceo_today` — ดูนัด กิจกรรม งาน และ reminder วันนี้
+- `ceo_tasks` — ดูงาน
+- `ceo_events` — ดูนัด/กิจกรรมตามช่วงเวลา
+- `ceo_remember` — บันทึกความจำแบบ explicit; ระบบบล็อก Secret เช่น Password, API Key และ Token
+
+เมื่อ PC ปิด Tools เหล่านี้ยังทำงานจาก Supabase Cloud ได้ ส่วนการอ่านไฟล์ Local, Ollama, Browser และ Desktop Tools ยังต้องรอให้ Device Agent/Runtime ออนไลน์ตามเดิม
+
+OAuth discovery ใช้ Protected Resource Metadata ที่ `https://ceo.disomanceo.workers.dev/.well-known/oauth-protected-resource/mcp` และ Supabase รองรับ Dynamic Client Registration สำหรับ MCP client ที่รองรับมาตรฐานนี้
 
 ## เข้าใช้งาน
 
