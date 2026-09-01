@@ -1,5 +1,11 @@
 const clean=(value:unknown,max=6000)=>String(value??'').replace(/\u0000/g,'').trim().slice(0,max);
 
+export function recallSearchQuery(message:string):string {
+  const text=clean(message,4000);
+  const stripped=text.replace(/[?？]/g,' ').replace(/(?:อะไร|ใคร|ที่ไหน|เมื่อไร|เมื่อไหร่|ยังไง|อย่างไร|เท่าไร|กี่|what|who|where|when|how)\s*$/i,'').replace(/\s+/g,' ').trim();
+  return stripped.length>=4?stripped:text;
+}
+
 export function cloudChatFallback(message:string, results:any[]):string {
   const text=clean(message,4000);
   const rows=Array.isArray(results)?results:[];

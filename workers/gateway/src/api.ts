@@ -1,7 +1,7 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
-import { cloudChatFallback } from './chat';
+import { cloudChatFallback, recallSearchQuery } from './chat';
 import { enqueueOllamaChat } from './runtime-chat';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
@@ -65,6 +65,7 @@ async function listToday(env: Env, token: string, url: URL) {
 
 async function searchKnowledge(env: Env, token: string, query: string, limit = 10) {
   const q = clean(query, 240);
+  const recallQ = recallSearchQuery(q);
   const perTable = Math.max(5, Math.min(25, limit * 2));
   const specs = [
     ['memories', ['title', 'content'], 'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at'],
@@ -74,17 +75,17 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   ] as const;
   const rows: any[] = [];
   for (const [table, fields, select] of specs) {
-    const or = q ? searchOr([...fields], q) : '';
+    const or = recallQ ? searchOr([...fields], recallQ) : '';
     const found = await rest<any[]>(env, token, `${table}${qs({ select, status: 'eq.active', ...(or ? { or } : {}), order: 'updated_at.desc', limit: perTable })}`).catch(() => []);
     rows.push(...found.map(row => ({ ...row, kind: table })));
   }
-  const replicaOr = q ? searchOr(['title','content'], q) : '';
+  const replicaOr = recallQ ? searchOr(['title','content'], recallQ) : '';
   const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
   const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
   const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')));
   rows.length = 0;
   rows.push(...legacyOnly, ...replicaRows.map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
-  const tokens = q.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const tokens = recallQ.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const ranked = rows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
     const body = clean(row.content || row.summary || row.rationale || '', 5000).toLocaleLowerCase();

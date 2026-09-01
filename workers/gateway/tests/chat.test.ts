@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { cloudChatFallback } from '../src/chat';
+import { cloudChatFallback, recallSearchQuery } from '../src/chat';
 
 describe('cloud chat fallback',()=>{
+  it('strips Thai recall question tails for Knowledge search',()=>{
+    expect(recallSearchQuery('เมื่อวานกินข้าวกับอะไร')).toBe('เมื่อวานกินข้าวกับ');
+    expect(recallSearchQuery('ไปกับใคร?')).toBe('ไปกับ');
+  });
   it('answers greetings without pretending Knowledge is missing',()=>{
     expect(cloudChatFallback('สวัสดี',[])).toContain('Ceo พร้อม');
     expect(cloudChatFallback('hello',[])).toContain('Ceo พร้อม');
