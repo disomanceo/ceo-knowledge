@@ -12,6 +12,7 @@ export function cloudChatFallback(message:string, results:any[]):string {
     return 'พบข้อมูลที่เกี่ยวข้องใน Ceo Knowledge:\n'+lines.join('\n');
   }
   if(/^(?:สวัสดี|หวัดดี|ดีครับ|ดีค่ะ|hello|hi|hey)(?:\s|[!.?]|$)/i.test(text))return 'สวัสดีครับ Ceo พร้อมแล้วครับ ตอนนี้ผมช่วยจำข้อมูล ค้น Knowledge ดูงานค้าง นัดหมาย และสถานะเครื่องได้';
-  if(/(?:ทำอะไรได้|ช่วยอะไรได้|ความสามารถ|ใช้ยังไง|how can you help|what can you do)/i.test(text))return 'ตอนนี้ Ceo Cloud ช่วยได้หลัก ๆ คือ จำ/ค้นข้อมูลใน Ceo Knowledge, ดู Today, Tasks, Memory, Knowledge Graph, Devices และ Ceo Drive ครับ ส่วนการตอบ AI ทั่วไปต้องเปิด AI Provider เพิ่ม';
-  return 'ตอนนี้ Chat บน Cloud อยู่ในโหมด Ceo Knowledge ครับ ผมหาข้อมูลเรื่องนี้ในคลังยังไม่เจอ แต่ระบบไม่ได้เสีย — คุณยังสั่ง “จำไว้…” ถามงานค้าง/นัดวันนี้ หรือค้นข้อมูลที่เคยเก็บไว้ได้ ส่วนการคุยตอบแบบ AI ทั่วไปจะเปิดได้เมื่อเพิ่ม AI Provider ให้ Cloud';
+  if(/(?:ทำอะไรได้|ช่วยอะไรได้|ความสามารถ|ใช้ยังไง|how can you help|what can you do)/i.test(text))return 'ตอนนี้ Ceo Cloud ช่วยจำและค้น Ceo Knowledge, ดู Today, Tasks, Memory Graph, Devices และ Ceo Drive ได้ครับ ถ้าต้องการคุย AI ทั่วไปบน Cloud ให้ตั้ง AI Provider เพิ่ม';
+  if(/(?:เมื่อวาน|เมื่อเช้า|เมื่อคืน|วันก่อน|ก่อนหน้านี้|จำได้ไหม|เคย|กินอะไร|กินข้าว|ไปไหน|อยู่กับใคร|คุยกับใคร|yesterday|last night|remember when|what did i)/i.test(text))return 'ยังไม่พบข้อมูลที่บันทึกไว้เกี่ยวกับเรื่องนี้ครับ ถ้าเหตุการณ์นี้เคยถูก Auto Memory เก็บไว้ ผมจะตอบจากความจำได้ทันที';
+  return 'ยังไม่พบข้อมูลที่เกี่ยวข้องใน Ceo Knowledge ครับ ถ้าเป็นคำถามจากความจำ ผมจะตอบเมื่อมีข้อมูลบันทึกไว้; ถ้าเป็นคำถาม AI ทั่วไปบน Cloud ต้องตั้ง AI Provider เพิ่ม';
 }

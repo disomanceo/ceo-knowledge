@@ -306,6 +306,14 @@ export interface KnowledgeGraphNode {
   status: string;
   tags: string[];
   updated_at: string;
+  node_type?: string;
+  content?: string;
+  project_ref?: string;
+  source_kind?: string;
+  reference_path?: string;
+  event_at?: string | null;
+  importance?: number;
+  metadata?: Record<string, unknown>;
 }
 
 export interface KnowledgeGraphLink {

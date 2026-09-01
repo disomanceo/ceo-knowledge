@@ -51,6 +51,16 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
     expect(d.kind).toBe('ignore');
     expect(d.retention).toBe('none');
   });
+
+  it('keeps daily-life statements as episodic archive candidates but ignores recall questions',()=>{
+    const fact=classifyAutoMemoryHeuristic({message:'เมื่อวานกินข้าวกับแกงไก่ที่บ้าน',source:'chatgpt'},now);
+    expect(fact.kind).toBe('memory');
+    expect(fact.eventAt).toBe('2026-08-31T02:00:00.000Z');
+    expect(['consolidation','permanent']).toContain(fact.retention);
+    const question=classifyAutoMemoryHeuristic({message:'เมื่อวานกินข้าวกับอะไร',source:'chatgpt'},now);
+    expect(question.kind).toBe('ignore');
+    expect(question.retention).toBe('none');
+  });
 });
 
 describe('Ceo Knowledge Auto Memory central API',()=>{
@@ -66,6 +76,7 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
       if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
       if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-row',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
       if(url.endsWith('/rest/v1/events?select=*')&&method==='POST')return json([{id:'evt-1',...body}]);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
       throw new Error('unexpected '+method+' '+url);
     });
 
@@ -96,6 +107,7 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
       if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
       if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-row',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
       if(url.includes('/rest/v1/knowledge_entries?')&&method==='POST')return json([{id:'knowledge-1',...body}]);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
       throw new Error('unexpected '+method+' '+url);
     });
 
@@ -119,6 +131,7 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
       if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST'){storedFingerprint=body.metadata.lastCaptureFingerprint;return json([{id:'conv-row',metadata:body.metadata}]);}
       if(url.includes('/rest/v1/events?')&&method==='GET')return eventWrites?json([{id:'evt-1',metadata:{captureFingerprint:'existing'}}]):json([]);
       if(url.endsWith('/rest/v1/events?select=*')&&method==='POST'){eventWrites++;return json([{id:'evt-'+eventWrites,...body}]);}
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
       throw new Error('unexpected '+method+' '+url);
     });
     const input={message:'25 ก.ย. 2569 เวลา 09.00 น. มีงานเลี้ยงเกษียณ ผอ. เผือก ที่โรงเรียน',source:'chatgpt' as const,conversationId:'retirement-school'};

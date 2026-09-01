@@ -161,6 +161,7 @@ export function parseThaiDateTime(text: string, now = new Date()): string | null
     if (/มะรืน|day\s+after\s+tomorrow/i.test(value)) offset = 2;
     else if (/พรุ่งนี้|tomorrow/i.test(value)) offset = 1;
     else if (/วันนี้|today/i.test(value)) offset = 0;
+    else if (/เมื่อวาน|yesterday/i.test(value)) offset = -1;
     if (offset !== null) {
       const d = new Date(Date.UTC(base.year, base.month - 1, base.day + offset));
       date = { year: d.getUTCFullYear(), month: d.getUTCMonth() + 1, day: d.getUTCDate() };
@@ -205,7 +206,7 @@ function contactFields(text: string) {
 }
 
 function heuristicKind(text: string, eventAt: string | null, explicit: boolean): { kind: AutoMemoryKind; confidence: number } {
-  const question = /[?？]\s*$/.test(text) || /^(?:อะไร|ทำไม|ยังไง|อย่างไร|เท่าไร|กี่|who|what|why|how|when|where)\b/i.test(text);
+  const question = /[?？]\s*$/.test(text) || /^(?:อะไร|ทำไม|ยังไง|อย่างไร|เท่าไร|กี่|who|what|why|how|when|where)\b/i.test(text) || /(?:อะไร|ใคร|ที่ไหน|เมื่อไร|ยังไง|อย่างไร|เท่าไร|กี่|what|who|where|when|how)\s*$/i.test(text);
   const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|appointment|meeting|schedule/i.test(text);
   const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|todo|task|deadline/i.test(text);
   const projectCue = /โปรเจกต์|โครงการ|ระบบ|workspace|repository|repo|architecture|roadmap|version|เวอร์ชัน|ตัดสินใจ|เลือกใช้|กำหนดให้/i.test(text);
@@ -220,6 +221,7 @@ function heuristicKind(text: string, eventAt: string | null, explicit: boolean):
   if (eventCue) return { kind: 'event', confidence: eventAt ? 0.95 : 0.70 };
   if (preferenceCue || explicit) return { kind: 'memory', confidence: explicit ? 0.99 : 0.88 };
   if (question || text.length < 18) return { kind: 'ignore', confidence: 0.90 };
+  if (/(?:วันนี้|เมื่อวาน|เมื่อคืน|เมื่อเช้า|เช้านี้|เย็นนี้|เมื่อกี้|today|yesterday|last night)/i.test(text) && /(?:กิน|ไป|เจอ|คุย|ทำ|ซื้อ|ดู|เล่น|กลับ|เดินทาง|eat|ate|went|met|talked|bought|watched)/i.test(text)) return { kind: 'memory', confidence: 0.78 };
   if (/วันที่|เวลา|ต้อง|จะ|ตกลง|สรุป|สำคัญ|จำเป็น/i.test(text)) return { kind: 'memory', confidence: 0.67 };
   return { kind: 'ignore', confidence: 0.74 };
 }
@@ -355,17 +357,75 @@ function query(values: Record<string, string>): string {
   return `?${q.toString()}`;
 }
 
+async function persistReplicaNode(env: Env, token: string, input: {
+  prefix: 'mem'|'evt'|'task'|'person'|'project'|'conv';
+  nodeType: 'memory'|'event'|'task'|'person'|'project'|'conversation';
+  objectType: string;
+  objectId: string;
+  title: string;
+  content: string;
+  projectRef?: string;
+  memoryKind?: 'episodic'|'semantic'|'procedural'|'prospective'|'derived'|'summary'|null;
+  sourceKind?: 'user'|'conversation'|'document'|'external_api'|'web'|'device'|'ai_derived'|'system';
+  importance?: number;
+  retentionPolicy?: 'standard'|'permanent'|'temporary';
+  tier?: 'hot'|'warm'|'cold'|'pinned';
+  topicIds?: string[];
+  entityIds?: string[];
+  sourceRefs?: string[];
+  derivedFrom?: string[];
+  eventAt?: string|null;
+  metadata?: Record<string, unknown>;
+}) {
+  const digest = await sha256Hex([input.prefix,input.objectType,input.objectId].join('\u001f'));
+  const nodeId = `${input.prefix}_${digest.slice(0,20)}`;
+  const contentHash = await sha256Hex(input.content);
+  const eventDigest = await sha256Hex([nodeId,'1',contentHash].join('\u001f'));
+  const snapshot = {
+    nodeId,
+    nodeType: input.nodeType,
+    objectType: input.objectType,
+    objectId: input.objectId,
+    referencePath: `ceo://${input.nodeType}/${input.objectId}`,
+    title: input.title,
+    content: input.content,
+    projectId: clean(input.projectRef,160),
+    memoryKind: input.memoryKind || null,
+    sourceKind: input.sourceKind || 'conversation',
+    truthStatus: 'reported',
+    evidenceStatus: 'single_source',
+    importance: Math.max(0,Math.min(3,Math.round(Number(input.importance ?? 2)))),
+    retentionPolicy: input.retentionPolicy || 'standard',
+    tier: input.tier || 'hot',
+    topicIds: uniq(input.topicIds,30,120),
+    entityIds: uniq(input.entityIds,30,120),
+    sourceRefs: uniq(input.sourceRefs,60,500),
+    derivedFrom: uniq(input.derivedFrom,60,500),
+    eventAt: input.eventAt || null,
+    datePrecision: input.eventAt ? 'minute' : null,
+    revision: 1,
+    contentHash,
+    schemaVersion: 2,
+    metadata: input.metadata || {},
+  };
+  const replica = await rpc<any>(env, token, 'memory_replica_apply', { p_snapshot:snapshot, p_base_revision:0, p_client_event_id:`mem_evt_${eventDigest.slice(0,24)}`, p_device_id:null });
+  return { nodeId, replica };
+}
+
 async function archiveConversation(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, fingerprint: string, source: string, conversationKey: string) {
   const existing = await rest<any[]>(env, token, `conversation_summaries${query({ select: 'id,summary,metadata,decisions,open_loops,facts', conversation_key: `eq.${conversationKey}`, limit: '1' })}`).catch(() => []);
   if (existing[0]?.metadata?.lastCaptureFingerprint === fingerprint) return { record: existing[0], duplicate: true };
 
-  const summary = clean(input.conversationSummary, 6000) || (decision.retention === 'none' ? '' : `${decision.kind}: ${decision.title}`.slice(0, 1000));
+  const previous=existing[0]||null;
+  const selectedSummary=decision.retention === 'none' ? '' : `${decision.kind}: ${decision.title}`.slice(0, 1000);
+  const suppliedSummary=clean(input.conversationSummary,6000);
+  const summary=suppliedSummary||[clean(previous?.summary,4500),selectedSummary].filter(Boolean).join('\n').slice(-6000);
   if (!summary) return { record: null, duplicate: false };
-  const decisions = uniq(input.decisions, 30, 500);
-  const facts = uniq(input.facts, 40, 500);
-  const openLoops = uniq(input.openLoops, 30, 500);
+  const decisions = [...uniq(previous?.decisions,30,500),...uniq(input.decisions,30,500)];
+  const facts = [...uniq(previous?.facts,40,500),...uniq(input.facts,40,500)];
+  const openLoops = [...uniq(previous?.open_loops,30,500),...uniq(input.openLoops,30,500)];
   if (decision.memoryType === 'decision' && decision.retention === 'permanent') decisions.push(decision.content.slice(0, 500));
-  if (decision.kind === 'memory' && decision.retention === 'permanent') facts.push(decision.content.slice(0, 500));
+  if (decision.kind === 'memory' && decision.retention !== 'none') facts.push(decision.content.slice(0, 500));
   if (decision.kind === 'task') openLoops.push(decision.content.slice(0, 500));
   const projectRef = clean(input.projectId, 160);
   const body: any = {
@@ -422,23 +482,33 @@ async function persistEvent(env: Env, token: string, input: AutoMemoryInput, dec
   if (!decision.eventAt) return null;
   if (checkDuplicate) {
     const existing = await findDomainCapture(env, token, 'events', captureFingerprint);
-    if (existing[0]) return { kind: 'event', id: existing[0].id, record: existing[0], duplicate: true };
+    if (existing[0]) {
+      const mirror=await persistReplicaNode(env,token,{prefix:'evt',nodeType:'event',objectType:'event',objectId:existing[0].id,title:existing[0].title||decision.title,content:existing[0].description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[existing[0].id,clean(input.sourceRef,500)].filter(Boolean),eventAt:existing[0].start_at||decision.eventAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});
+      return { kind: 'event', id: existing[0].id, nodeId:mirror.nodeId, record: existing[0], replica:mirror.replica, duplicate: true };
+    }
   }
   const body: any = { title: decision.title, description: decision.content, event_type: decision.eventType, start_at: decision.eventAt, end_at: null, all_day: false, timezone: clean(input.timezone || 'Asia/Bangkok', 80), location: '', status: 'planned', priority: decision.importance >= 3 ? 'high' : 'normal', remind_at: null, tags: ['auto-memory', source], metadata: domainMetadata(input, decision, source, conversationKey, captureFingerprint) };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
   const rows = await rest<any[]>(env, token, 'events?select=*', { method: 'POST', body, prefer: 'return=representation' });
-  return rows[0] ? { kind: 'event', id: rows[0].id, record: rows[0] } : null;
+  const record=rows[0]; if(!record)return null;
+  const mirror=await persistReplicaNode(env,token,{prefix:'evt',nodeType:'event',objectType:'event',objectId:record.id,title:record.title||decision.title,content:record.description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[record.id,clean(input.sourceRef,500)].filter(Boolean),eventAt:record.start_at||decision.eventAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});
+  return { kind: 'event', id: record.id, nodeId:mirror.nodeId, record, replica:mirror.replica };
 }
 
 async function persistTask(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string, checkDuplicate: boolean) {
   if (checkDuplicate) {
     const existing = await findDomainCapture(env, token, 'tasks', captureFingerprint);
-    if (existing[0]) return { kind: 'task', id: existing[0].id, record: existing[0], duplicate: true };
+    if (existing[0]) {
+      const mirror=await persistReplicaNode(env,token,{prefix:'task',nodeType:'task',objectType:'task',objectId:existing[0].id,title:existing[0].title||decision.title,content:existing[0].description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[existing[0].id,clean(input.sourceRef,500)].filter(Boolean),eventAt:existing[0].due_at||decision.dueAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});
+      return { kind: 'task', id: existing[0].id, nodeId:mirror.nodeId, record: existing[0], replica:mirror.replica, duplicate: true };
+    }
   }
   const body: any = { title: decision.title, description: decision.content, status: 'open', priority: decision.importance >= 3 ? 'high' : 'normal', due_at: decision.dueAt, waiting_for: '', tags: ['auto-memory', source], metadata: domainMetadata(input, decision, source, conversationKey, captureFingerprint) };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
   const rows = await rest<any[]>(env, token, 'tasks?select=*', { method: 'POST', body, prefer: 'return=representation' });
-  return rows[0] ? { kind: 'task', id: rows[0].id, record: rows[0] } : null;
+  const record=rows[0]; if(!record)return null;
+  const mirror=await persistReplicaNode(env,token,{prefix:'task',nodeType:'task',objectType:'task',objectId:record.id,title:record.title||decision.title,content:record.description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[record.id,clean(input.sourceRef,500)].filter(Boolean),eventAt:record.due_at||decision.dueAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});
+  return { kind: 'task', id: record.id, nodeId:mirror.nodeId, record, replica:mirror.replica };
 }
 
 async function persistContact(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string) {
@@ -447,7 +517,9 @@ async function persistContact(env: Env, token: string, input: AutoMemoryInput, d
   const body: any = { full_name: decision.fullName, nickname: '', position: decision.position, organization: decision.organization, relationship: '', notes: decision.content, aliases: [], tags: ['auto-memory', source], importance: decision.importance, status: 'active', fingerprint, metadata: domainMetadata(input, decision, source, conversationKey, captureFingerprint) };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
   const rows = await rest<any[]>(env, token, `people${query({ select: '*', on_conflict: 'user_id,fingerprint' })}`, { method: 'POST', body, prefer: 'resolution=merge-duplicates,return=representation' });
-  return rows[0] ? { kind: 'contact', id: rows[0].id, record: rows[0] } : null;
+  const record=rows[0]; if(!record)return null;
+  const mirror=await persistReplicaNode(env,token,{prefix:'person',nodeType:'person',objectType:'person',objectId:record.id,title:record.full_name||decision.fullName||decision.title,content:record.notes||decision.content,projectRef:clean(input.projectId,160),memoryKind:'semantic',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[record.id,clean(input.sourceRef,500)].filter(Boolean),metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});
+  return { kind: 'contact', id: record.id, nodeId:mirror.nodeId, record, replica:mirror.replica };
 }
 
 async function persistProjectKnowledge(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string) {
@@ -456,7 +528,9 @@ async function persistProjectKnowledge(env: Env, token: string, input: AutoMemor
   const body: any = { title: decision.title, summary: decision.content.slice(0, 800), content: decision.content, knowledge_type: 'project', topic: decision.topic || projectRef || 'project', importance: decision.importance, confidence: decision.confidence, status: 'active', tags: ['auto-memory', source, ...uniq(input.topics, 10, 100)], fingerprint, metadata: domainMetadata(input, decision, source, conversationKey, captureFingerprint) };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
   const rows = await rest<any[]>(env, token, `knowledge_entries${query({ select: '*', on_conflict: 'user_id,fingerprint' })}`, { method: 'POST', body, prefer: 'resolution=merge-duplicates,return=representation' });
-  return rows[0] ? { kind: 'project_knowledge', id: rows[0].id, record: rows[0] } : null;
+  const record=rows[0]; if(!record)return null;
+  const mirror=await persistReplicaNode(env,token,{prefix:'project',nodeType:'project',objectType:'knowledge_entry',objectId:record.id,title:record.title||decision.title,content:record.content||decision.content,projectRef, memoryKind:'semantic',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:[decision.topic,...uniq(input.topics,20,120)].filter(Boolean),sourceRefs:[record.id,clean(input.sourceRef,500)].filter(Boolean),metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});
+  return { kind: 'project_knowledge', id: record.id, nodeId:mirror.nodeId, record, replica:mirror.replica };
 }
 
 export async function autoCapture(env: Env, token: string, input: AutoMemoryInput) {

@@ -10,11 +10,17 @@ describe('cloud chat fallback',()=>{
     expect(cloudChatFallback('Ceo ทำอะไรได้บ้าง',[])).toContain('Ceo Knowledge');
     expect(cloudChatFallback('Ceo ทำอะไรได้บ้าง',[])).toContain('AI Provider');
   });
-  it('clearly labels knowledge-only mode for unmatched general questions',()=>{
+  it('keeps unmatched general questions concise and explains AI Provider only when relevant',()=>{
     const answer=cloudChatFallback('ช่วยคิดชื่อโครงการใหม่',[]);
-    expect(answer).toContain('โหมด Ceo Knowledge');
-    expect(answer).toContain('ระบบไม่ได้เสีย');
+    expect(answer).toContain('ยังไม่พบข้อมูล');
     expect(answer).toContain('AI Provider');
+    expect(answer).not.toContain('ระบบไม่ได้เสีย');
+  });
+  it('answers personal recall misses as a memory miss instead of a system warning',()=>{
+    const answer=cloudChatFallback('เมื่อวานกินข้าวกับอะไร',[]);
+    expect(answer).toContain('ยังไม่พบข้อมูลที่บันทึกไว้');
+    expect(answer).toContain('Auto Memory');
+    expect(answer).not.toContain('AI Provider');
   });
   it('formats matching Knowledge instead of mode warning',()=>{
     const answer=cloudChatFallback('runtime',[{title:'Runtime Plan',summary:'ทดสอบระบบ Runtime'}]);

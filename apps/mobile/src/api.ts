@@ -27,7 +27,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   me: () => request<{ id: string; email: string; metadata?: Record<string, unknown> }>('/api/me'),
   today: () => request<{ events: EventRecord[]; tasks: TaskRecord[]; reminders: any[]; range: { from: string; to: string } }>('/api/today'),
-  chat: (message: string) => request<any>('/api/chat', { method: 'POST', body: JSON.stringify({ message }) }),
+  chat: (message: string, conversationId = '') => request<any>('/api/chat', { method: 'POST', body: JSON.stringify({ message, conversationId }) }),
   memories: (q = '') => request<{ memories: MemoryRecord[] }>(`/api/memories${q ? `?q=${encodeURIComponent(q)}` : ''}`),
   remember: (content: string, title = '') => request<MemoryRecord>('/api/memories', { method: 'POST', body: JSON.stringify({ title, content, memoryType: 'note', importance: 2, scope: 'global', tags: ['mobile'] }) }),
   forget: (id: string) => request<MemoryRecord | null>(`/api/memories/${id}/forget`, { method: 'POST', body: '{}' }),
