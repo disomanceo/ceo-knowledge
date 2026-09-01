@@ -8,6 +8,7 @@ import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
 import { handleMcpRequest, type McpToolCallContext } from './mcp';
+import { applyMemoryMaintenance, manageMemoryNode, planMemoryMaintenance } from './memory-gardener';
 
 const corsHeaders: HeadersInit = {
   'access-control-allow-origin': '*',
@@ -72,12 +73,13 @@ async function temporalKnowledge(env: Env, token: string, intent: TimeIntent) {
   const [events,tasks,eventMemories,legacyText,replicaText]=await Promise.all([
     rest<EventRecord[]>(env,token,`events${qs({select:'*',start_at:`gte.${intent.from}`,order:'start_at.asc',limit:200})}`).then(rows=>rows.filter(row=>Date.parse(row.start_at)<=Date.parse(intent.to)&&row.status!=='cancelled'&&eventMatchesCalendarScope(row,intent.scope)&&topicMatches(`${row.title||''} ${row.description||''} ${row.location||''}`,topic))).catch(()=>[]),
     rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',due_at:`gte.${intent.from}`,order:'due_at.asc.nullslast,updated_at.desc',limit:200})}`).then(rows=>rows.filter(row=>(intent.scope==='all'||intent.scope==='tasks')&&Boolean(row.due_at)&&Date.parse(String(row.due_at))<=Date.parse(intent.to)&&topicMatches(`${row.title||''} ${row.description||''} ${row.waiting_for||''}`,topic))).catch(()=>[]),
-    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',event_at:`gte.${intent.from}`,order:'event_at.asc',limit:200})}`).then(rows=>rows.filter(row=>row.event_at&&Date.parse(row.event_at)<=Date.parse(intent.to)&&!memoryLooksLikeQuestion(row)&&memoryMatchesCalendarScope(row,intent.scope)&&topicMatches(`${row.title||''} ${row.content||''}`,topic))).catch(()=>[]),
+    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,tier,retention_policy,metadata,updated_at',node_type:'eq.memory',event_at:`gte.${intent.from}`,order:'event_at.asc',limit:200})}`).then(rows=>rows.filter(row=>row?.metadata?.archived!==true&&row.event_at&&Date.parse(row.event_at)<=Date.parse(intent.to)&&!memoryLooksLikeQuestion(row)&&memoryMatchesCalendarScope(row,intent.scope)&&topicMatches(`${row.title||''} ${row.content||''}`,topic))).catch(()=>[]),
     rest<any[]>(env,token,`memories${qs({select:'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at',status:'eq.active',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:250})}`).catch(()=>[]),
-    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,updated_at',node_type:'eq.memory',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:250})}`).catch(()=>[]),
+    rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,event_at,project_ref,source_refs,reference_path,tier,retention_policy,metadata,updated_at',node_type:'eq.memory',...(textOr?{or:textOr}:{}),order:'updated_at.desc',limit:250})}`).catch(()=>[]),
   ]);
   const mirrored=new Set(replicaText.flatMap(row=>Array.isArray(row.source_refs)?row.source_refs:[]));
   const textual=[...replicaText,...legacyText.filter(row=>!mirrored.has(String(row.id||'')))]
+    .filter(row=>row?.metadata?.archived!==true)
     .filter(row=>!memoryLooksLikeQuestion(row))
     .filter(row=>memoryMatchesCalendarScope(row,intent.scope))
     .filter(row=>topicMatches(`${clean(row.title,500)} ${clean(row.content,5000)}`,topic))
@@ -112,11 +114,11 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   rows.push(...eventRows.map(row => ({ ...row, kind:'events', content:clean([row.description,row.location,row.start_at].filter(Boolean).join(' · '),5000), importance:2, updated_at:row.updated_at || row.start_at || row.created_at })));
   rows.push(...taskRows.map(row => ({ ...row, kind:'tasks', content:clean([row.description,row.waiting_for,row.due_at].filter(Boolean).join(' · '),5000), importance:2 })));
   const replicaOr = recallTerms ? searchOr(['title','content'], recallTerms) : '';
-  const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
+  const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,tier,retention_policy,metadata,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
   const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
   const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')) && !(row.kind === 'memories' && memoryLooksLikeQuestion(row)));
   rows.length = 0;
-  rows.push(...legacyOnly, ...replicaRows.filter(row => !memoryLooksLikeQuestion(row)).map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
+  rows.push(...legacyOnly, ...replicaRows.filter(row => row?.metadata?.archived!==true && !memoryLooksLikeQuestion(row)).map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
   const tokens = recallTerms.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const ranked = rows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
@@ -131,7 +133,9 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
       : answerField==='time' ? (row.kind==='events'&&row.start_at?70:row.kind==='tasks'&&row.due_at?55:0)
       : answerField==='status' ? ((row.kind==='tasks'||row.kind==='events')&&row.status?55:0)
       : 0;
-    return { ...row, _score: Math.round((hits + importance + recency + structuredBoost) * 100) / 100 };
+    const memoryMeta=row?.metadata&&typeof row.metadata==='object'?row.metadata:{};
+    const governanceBoost=row.kind==='memory_nodes'?((memoryMeta.canonical===true?45:0)+(row.tier==='pinned'?35:row.tier==='hot'?12:row.tier==='warm'?6:row.tier==='cold'?-4:0)+(row.retention_policy==='permanent'?18:0)):0;
+    return { ...row, _score: Math.round((hits + importance + recency + structuredBoost + governanceBoost) * 100) / 100 };
   }).sort((a, b) => b._score - a._score).slice(0, limit);
   return { query: q, count: ranked.length, results: ranked };
 }
@@ -305,6 +309,23 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok(result, body?.dryRun || (!result.written && !result.archive) ? 200 : 201);
     }
 
+    if (url.pathname === '/api/memory/maintenance/plan' && request.method === 'GET') {
+      const plan=await planMemoryMaintenance(env,token,{limit:safeLimit(url.searchParams.get('limit'),250,500)});
+      return ok(plan);
+    }
+    if (url.pathname === '/api/memory/maintenance/apply' && request.method === 'POST') {
+      const body=await jsonBody<any>(request);
+      return ok(await applyMemoryMaintenance(env,token,{limit:safeLimit(body?.limit,250,500),maxActions:safeLimit(body?.maxActions,80,200)}));
+    }
+    if (url.pathname === '/api/memory/maintenance/history' && request.method === 'GET') {
+      const runs=await rest<any[]>(env,token,`memory_maintenance_runs${qs({select:'*',order:'created_at.desc',limit:safeLimit(url.searchParams.get('limit'),20,100)})}`).catch(()=>[]);
+      return ok({runs});
+    }
+    const memoryManageMatch=url.pathname.match(/^\/api\/memory\/nodes\/((?:topic|mem|evt|task|person|project|place|decision|doc|src|summary|claim|conv)_[A-Za-z0-9_-]{8,80})\/manage$/);
+    if(memoryManageMatch&&request.method==='POST'){
+      const body=await jsonBody<any>(request),action=clean(body?.action,40);
+      return ok(await manageMemoryNode(env,token,memoryManageMatch[1]!,action,body?.payload||{}));
+    }
     if (url.pathname === '/api/memories' && request.method === 'GET') {
       const query = clean(url.searchParams.get('q'), 240), limit = safeLimit(url.searchParams.get('limit'), 30, 60), offset = Math.max(0,Math.min(5000,Number(url.searchParams.get('offset')||0)||0));
       const filter = clean(url.searchParams.get('filter'),30), fetchLimit=Math.min(250,offset+limit+30);
@@ -317,7 +338,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const combined:any[]=[...replicas.map(row=>({...memoryReplicaAsRecord(row),event_at:row.event_at||null,tier:row.tier||'hot',retention_policy:row.retention_policy||'standard',source_kind:row.source_kind||'',metadata:row.metadata||{}})), ...legacy.filter(row => !mirrored.has(row.id))];
       const hiddenQuestionCount=combined.filter(memoryLooksLikeQuestion).length;
       const raw:any[]=combined.filter(row=>!memoryLooksLikeQuestion(row))
-        .filter(row=>filter==='important'?Number(row.importance)>=2:filter==='today'?Date.parse(row.updated_at)>=Date.parse(bangkokDayRange().from):true)
+        .filter(row=>{const m=row?.metadata&&typeof row.metadata==='object'?row.metadata:{};if(filter==='archived')return m.archived===true;if(filter==='duplicates')return Boolean(m.canonicalOf);if(m.archived===true)return false;if(filter==='important')return Number(row.importance)>=2;if(filter==='today')return Date.parse(row.updated_at)>=Date.parse(bangkokDayRange().from);if(filter==='pinned')return row.tier==='pinned'||m.pinned===true;if(filter==='temporary')return row.retention_policy==='temporary'||['daily_log','consolidation'].includes(String(m.retention||''));return true})
         .sort((x,y)=>String(y.updated_at||'').localeCompare(String(x.updated_at||'')));
       const groups=new Map<string,any>();
       for(const row of raw){const key=clean(row.content||row.title,2000).toLocaleLowerCase().replace(/^(?:memory|note)\s*:\s*/i,'').replace(/[\s\p{P}]+/gu,' ').trim();if(!key)continue;const existing=groups.get(key);if(existing){existing.repeat_count=(existing.repeat_count||1)+1;if(String(row.updated_at)>String(existing.updated_at))Object.assign(existing,{...row,repeat_count:existing.repeat_count})}else groups.set(key,{...row,repeat_count:1})}

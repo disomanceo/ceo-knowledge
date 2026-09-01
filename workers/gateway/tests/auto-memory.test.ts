@@ -352,4 +352,18 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
     expect(payload.data.written).toBeNull();
     expect(calls).toHaveLength(1);
   });
+  it('writes explicit memory replica as permanent plus pinned',async()=>{
+    const calls:any[]=[];
+    vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url,method,body});
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-pin',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
+      if(url.includes('/rest/v1/memories?')&&method==='POST')return json([{id:'memory-pin',title:body.title,content:body.content,memory_type:body.memory_type,importance:body.importance,scope:body.scope,status:'active',tags:body.tags,created_at:'2026-09-01T00:00:00Z',updated_at:'2026-09-01T00:00:00Z'}]);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const result=await autoCapture(env,'user-token',{message:'จำไว้ว่า ตู้เอกสารสีเทาอยู่ห้องธุรการ',source:'chatgpt',conversationId:'pin-chat'});
+    expect(result.decision.kind).toBe('memory');expect(result.decision.explicit).toBe(true);expect(result.written.kind).toBe('memory');
+    const replica=calls.find(x=>x.url.endsWith('/rest/v1/rpc/memory_replica_apply'));
+    expect(replica.body.p_snapshot.retentionPolicy).toBe('permanent');expect(replica.body.p_snapshot.tier).toBe('pinned');
+  });
 });

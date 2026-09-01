@@ -550,7 +550,7 @@ async function persistMemory(env: Env, token: string, input: AutoMemoryInput, de
   const snapshot = {
     nodeId, nodeType: 'memory', referencePath: `ceo://memory/${nodeId}`, title: decision.title, content: decision.content, projectId: projectRef,
     memoryKind: decision.memoryType === 'rule' ? 'procedural' : decision.eventAt ? 'prospective' : 'semantic', sourceKind: 'conversation', truthStatus: 'reported', evidenceStatus: 'single_source',
-    importance: decision.importance, retentionPolicy: decision.explicit ? 'pinned' : 'standard', tier: 'hot', topicIds: uniq(input.topics, 30, 120), entityIds: [], sourceRefs: [memory.id, clean(input.sourceRef, 500)].filter(Boolean), derivedFrom: [], eventAt: decision.eventAt, datePrecision: decision.eventAt ? 'minute' : null, revision: 1, contentHash, schemaVersion: 2, metadata,
+    importance: decision.importance, retentionPolicy: decision.explicit ? 'permanent' : decision.retention === 'daily_log' ? 'temporary' : 'standard', tier: decision.explicit ? 'pinned' : decision.retention === 'consolidation' ? 'warm' : 'hot', topicIds: uniq(input.topics, 30, 120), entityIds: [], sourceRefs: [memory.id, clean(input.sourceRef, 500)].filter(Boolean), derivedFrom: [], eventAt: decision.eventAt, datePrecision: decision.eventAt ? 'minute' : null, revision: 1, contentHash, schemaVersion: 2, metadata,
   };
   const replica = await rpc<any>(env, token, 'memory_replica_apply', { p_snapshot: snapshot, p_base_revision: 0, p_client_event_id: `mem_evt_${eventDigest.slice(0, 24)}`, p_device_id: null });
   return { kind: 'memory', id: memory.id, nodeId, record: memory, replica };
