@@ -1,7 +1,7 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
-import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectQuery } from './chat';
+import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectMatches, recallSubjectQuery } from './chat';
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
@@ -121,7 +121,9 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   rows.length = 0;
   rows.push(...legacyOnly, ...replicaRows.filter(row => row?.metadata?.archived!==true && !memoryLooksLikeQuestion(row)).map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
   const tokens = recallTerms.toLocaleLowerCase().split(/\s+/).filter(Boolean);
-  const ranked = rows.map(row => {
+  const strictRows = rows.filter(row => recallSubjectMatches(q,row));
+  const candidateRows = strictRows.length ? strictRows : rows;
+  const ranked = candidateRows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
     const body = clean(row.content || row.summary || row.rationale || '', 5000).toLocaleLowerCase();
     const hay = `${title} ${body}`;

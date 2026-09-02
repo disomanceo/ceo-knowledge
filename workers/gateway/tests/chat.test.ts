@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectQuery } from '../src/chat';
+import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectMatches, recallSubjectQuery } from '../src/chat';
 
 describe('cloud chat fallback',()=>{
   it('strips Thai recall question tails for Knowledge search',()=>{
@@ -22,6 +22,17 @@ describe('cloud chat fallback',()=>{
     expect(recallAnswerField('ดูภาพยนต์วันไหน')).toBe('date');
     expect(recallAnswerField('ดูภาพยนต์ที่ไหน')).toBe('location');
     expect(recallAnswerField('เริ่มกี่โมง')).toBe('time');
+  });
+  it('requires distinctive recall subject terms before composing an answer',()=>{
+    const donKhat={kind:'events',title:'วันที่ 17 ก.ย. 2569 ประเมิน โรงเรียนวัดดอนขาด',description:'ประเมิน PA โรงเรียนวัดดอนขาด'};
+    const bangChik={kind:'events',title:'ประเมิน PA โรงเรียนบางจิก',description:'วันที่ 14 กันยายน 2569'};
+    const retireDinner={kind:'events',title:'งานเลี้ยงเกษียณ ผอ. เผือก',description:'ช่วงเย็น'};
+    const retireSchool={kind:'events',title:'งานเกษียณ ผอ. เผือก ที่โรงเรียน',description:'ช่วงเช้า'};
+    expect(recallSubjectMatches('ประเมิน pa ดอนขาดวันไหน',donKhat)).toBe(true);
+    expect(recallSubjectMatches('ประเมิน pa ดอนขาดวันไหน',bangChik)).toBe(false);
+    expect(recallSubjectMatches('กินเลี้ยงเกษียณงาน ผอ. เผือกวันไหน',retireDinner)).toBe(true);
+    expect(recallSubjectMatches('กินเลี้ยงเกษียณงาน ผอ. เผือกวันไหน',retireSchool)).toBe(false);
+    expect(recallSubjectMatches('จัดงานเกษียณวันไหน',retireSchool)).toBe(true);
   });
   it('answers greetings without pretending Knowledge is missing',()=>{
     expect(cloudChatFallback('สวัสดี',[])).toContain('Ceo พร้อม');

@@ -43,6 +43,28 @@ export function recallSearchQuery(message:string):string {
   return subject.length>=2?subject:text.replace(/[?？]/g,' ').replace(/\s+/g,' ').trim();
 }
 
+function normalizeRecallMatchText(value:string):string {
+  return normalizeThaiRecall(clean(value,5000).toLocaleLowerCase())
+    .replace(/กินเลี้ยง/g,'เลี้ยง ')
+    .replace(/เกษียณงาน/g,'เกษียณ งาน')
+    .replace(/big\s*c/g,'bigc')
+    .replace(/[^\p{L}\p{N}]+/gu,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+
+const RECALL_MATCH_STOPWORDS=new Set(['งาน','เรื่อง','กิจกรรม','นัด','กำหนด','การ','ของ','ที่','ไป','มี','จัด','เริ่ม','ต้อง','ช่วย','ดู','ถาม','หน่อย','ครับ','ค่ะ','คะ','นะ']);
+
+export function recallMatchTokens(message:string):string[] {
+  return [...new Set(normalizeRecallMatchText(recallSearchQuery(message)).split(/\s+/).filter(token=>token.length>=2&&!RECALL_MATCH_STOPWORDS.has(token)))];
+}
+
+export function recallSubjectMatches(message:string,row:any):boolean {
+  const tokens=recallMatchTokens(message);
+  if(!tokens.length)return true;
+  const hay=normalizeRecallMatchText([row?.title,row?.description,row?.content,row?.summary,row?.rationale,row?.location,row?.waiting_for].filter(Boolean).join(' '));
+  return tokens.every(token=>hay.includes(token));
+}
 function thaiDate(value:unknown):string {
   const date=new Date(String(value||''));
   if(Number.isNaN(date.getTime()))return'';
