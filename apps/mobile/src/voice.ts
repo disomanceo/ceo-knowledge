@@ -9,6 +9,12 @@ export interface VoicePreferences {
   voiceURI: string;
 }
 
+export interface SpeechFormatOptions {
+  preserveMeaningfulSymbols?: boolean;
+  announceLinks?: boolean;
+  announceCode?: boolean;
+}
+
 export const VOICE_PREFS_KEY = 'ceo-voice-preferences-v1';
 export const DEFAULT_VOICE_PREFERENCES: VoicePreferences = {
   mode: 'manual',
@@ -55,22 +61,67 @@ export function speechSynthesisSupported(scope: any = typeof window !== 'undefin
 }
 
 const replacements: Array<[RegExp,string]> = [
-  [/\bAPI\b/gi,'เอพีไอ'],[/\bMCP\b/gi,'เอ็มซีพี'],[/\bPA\b/g,'พีเอ'],[/\bAI\b/gi,'เอไอ'],
+  [/\bAPI\b/gi,'เอพีไอ'],[/\bMCP\b/gi,'เอ็มซีพี'],[/\bPA\b/g,'พีเอ'],[/\bAI\b/gi,'เอไอ'],[/\bPWA\b/gi,'พีดับเบิลยูเอ'],
+  [/\bTTS\b/gi,'ทีทีเอส'],[/\bSTT\b/gi,'เอสทีที'],[/\bUI\b/gi,'ยูไอ'],[/\bUX\b/gi,'ยูเอ็กซ์'],[/\bURL\b/gi,'ยูอาร์แอล'],
   [/\bCeo\b/gi,'ซีอีโอ'],[/\bGemini\b/gi,'เจมิไน'],[/\bSupabase\b/gi,'ซูพาเบส'],[/\bOllama\b/gi,'โอลามา'],
+  [/\bChatGPT\b/gi,'แชตจีพีที'],[/\bClaude\b/gi,'คลอด'],[/\bAndroid\b/gi,'แอนดรอยด์'],[/\biOS\b/gi,'ไอโอเอส'],
 ];
 
-export function normalizeSpeechText(input: string): string {
+const thaiMonths: Record<string,string> = {
+  'ม.ค.':'มกราคม','ก.พ.':'กุมภาพันธ์','มี.ค.':'มีนาคม','เม.ย.':'เมษายน','พ.ค.':'พฤษภาคม','มิ.ย.':'มิถุนายน',
+  'ก.ค.':'กรกฎาคม','ส.ค.':'สิงหาคม','ก.ย.':'กันยายน','ต.ค.':'ตุลาคม','พ.ย.':'พฤศจิกายน','ธ.ค.':'ธันวาคม',
+};
+
+function expandThaiMonths(text:string):string {
+  let out=text;
+  for(const [shortName,longName] of Object.entries(thaiMonths))out=out.replaceAll(shortName,longName);
+  return out;
+}
+
+function normalizeMeaningfulSymbols(text:string,preserve:boolean):string {
+  const symbolContext=/(?:พิมพ์|เขียน|เครื่องหมาย|สัญลักษณ์|ใช้|ใส่|ตามด้วย|ขึ้นต้นด้วย|ลงท้ายด้วย)/i;
+  if(!preserve || !symbolContext.test(text))return text.replace(/[*#_~|]+/g,' ');
+  return text
+    .replace(/\*/g,' เครื่องหมายดอกจัน ')
+    .replace(/#/g,' เครื่องหมายแฮช ')
+    .replace(/_/g,' เครื่องหมายขีดล่าง ')
+    .replace(/~/g,' เครื่องหมายตัวหนอน ')
+    .replace(/\|/g,' เครื่องหมายขีดตั้ง ');
+}
+
+export function normalizeSpeechText(input: string, options: SpeechFormatOptions = {}): string {
+  const {preserveMeaningfulSymbols=true,announceLinks=true,announceCode=true}=options;
   let text=String(input||'').normalize('NFC');
-  text=text.replace(/```[\s\S]*?```/g,' รายละเอียดโค้ดอยู่บนหน้าจอ ')
+  text=text
+    .replace(/```[\s\S]*?```/g,announceCode?' รายละเอียดโค้ดอยู่บนหน้าจอ ':' ')
     .replace(/`([^`]+)`/g,'$1')
-    .replace(/https?:\/\/\S+/gi,' ลิงก์อยู่บนหน้าจอ ')
+    .replace(/!\[[^\]]*\]\([^)]*\)/g,' ')
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)]+)\)/gi,'$1')
+    .replace(/https?:\/\/\S+/gi,announceLinks?' ลิงก์อยู่บนหน้าจอ ':' ')
     .replace(/^\s*(?:Ceo\s*:\s*)/gim,'')
-    .replace(/^[•*-]\s+/gm,'')
-    .replace(/[│├└─]+/g,' ')
-    .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\b/g,(_m,h,m)=>`${Number(h)} นาฬิกา ${Number(m) ? Number(m)+' นาที' : ''}`)
-    .replace(/\s+/g,' ').trim();
+    .replace(/^\s{0,3}#{1,6}\s+/gm,'')
+    .replace(/^\s*>+\s?/gm,'')
+    .replace(/^\s*(?:[-+*•]|\d+[.)])\s+/gm,'')
+    .replace(/\*\*([^*]+)\*\*/g,'$1')
+    .replace(/__([^_]+)__/g,'$1')
+    .replace(/~~([^~]+)~~/g,'$1')
+    .replace(/[│├└┌┐┘┬┴┼─]+/g,' ')
+    .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:น\.)?/g,(_m,h,m)=>`${Number(h)} นาฬิกา${Number(m) ? ' '+Number(m)+' นาที' : ''}`)
+    .replace(/\b([01]?\d|2[0-3])\s*นาฬิกา\s*00\s*นาที\b/g,'$1 นาฬิกา')
+    .replace(/\s*→\s*/g,' แล้ว ')
+    .replace(/\s*[=]{2,}\s*/g,' ')
+    .replace(/\.{3,}/g,'…');
+
+  text=expandThaiMonths(text);
+  text=normalizeMeaningfulSymbols(text,preserveMeaningfulSymbols);
   for(const [pattern,replacement] of replacements)text=text.replace(pattern,replacement);
-  return text.replace(/\s+([,.!?])/g,'$1').trim();
+
+  return text
+    .replace(/\s*([,;:])\s*/g,'$1 ')
+    .replace(/\s+([.!?…])/g,'$1')
+    .replace(/([.!?…])(?=[^\s])/g,'$1 ')
+    .replace(/\s+/g,' ')
+    .trim();
 }
 
 export function smartSpeechText(input: string, maxChars = 420): string {
@@ -81,9 +132,13 @@ export function smartSpeechText(input: string, maxChars = 420): string {
   if(!normalized)return'';
   if(technical && normalized.length>260)return 'ดำเนินการด้านเทคนิคแล้วครับ รายละเอียดอยู่บนหน้าจอ';
   if(normalized.length<=maxChars)return normalized;
-  const sentences=normalized.split(/(?<=[.!?]|ครับ|ค่ะ|คะ)\s+/).filter(Boolean);
+  const sentences=normalized.split(/(?<=[.!?…]|ครับ|ค่ะ|คะ)\s+/).filter(Boolean);
   let summary='';
-  for(const sentence of sentences){if((summary+' '+sentence).trim().length>maxChars-55)break;summary=(summary+' '+sentence).trim();if(summary.length>180&&sentences.indexOf(sentence)>=1)break;}
+  for(const sentence of sentences){
+    if((summary+' '+sentence).trim().length>maxChars-55)break;
+    summary=(summary+' '+sentence).trim();
+    if(summary.length>180&&sentences.indexOf(sentence)>=1)break;
+  }
   if(!summary)summary=normalized.slice(0,maxChars-60).trim();
   return `${summary} มีรายละเอียดเพิ่มเติมบนหน้าจอครับ`;
 }
@@ -93,13 +148,21 @@ export function speechTextForMode(input:string,mode:VoiceMode):string {
   return mode==='smart'?smartSpeechText(input):normalizeSpeechText(input);
 }
 
-export function splitSpeechText(input:string,maxChars=240):string[] {
+export function splitSpeechText(input:string,maxChars=220):string[] {
   const text=String(input||'').trim();if(!text)return[];
-  const sentences=text.split(/(?<=[.!?]|ครับ|ค่ะ|คะ)\s+/).filter(Boolean),out:string[]=[];
+  const sentences=text.split(/(?<=[.!?…]|ครับ|ค่ะ|คะ)\s+/).filter(Boolean),out:string[]=[];
   for(const sentence of sentences){
     if(sentence.length<=maxChars){out.push(sentence);continue;}
-    const words=sentence.split(/\s+/);let part='';
-    for(const word of words){if(part&&(part+' '+word).length>maxChars){out.push(part);part=word}else part=(part+' '+word).trim();}
+    const phrases=sentence.split(/(?<=[,;:])\s+/).filter(Boolean);
+    let part='';
+    for(const phrase of phrases){
+      if(phrase.length>maxChars){
+        const words=phrase.split(/\s+/);
+        for(const word of words){if(part&&(part+' '+word).length>maxChars){out.push(part);part=word}else part=(part+' '+word).trim();}
+        continue;
+      }
+      if(part&&(part+' '+phrase).length>maxChars){out.push(part);part=phrase}else part=(part+' '+phrase).trim();
+    }
     if(part)out.push(part);
   }
   return out.length?out:[text.slice(0,maxChars)];

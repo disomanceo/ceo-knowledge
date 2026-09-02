@@ -18,6 +18,18 @@ describe('Ceo Chat Voice',()=>{
     expect(text).toContain('เอพีไอ');expect(text).toContain('เอ็มซีพี');expect(text).toContain('9 นาฬิกา');expect(text).toContain('ลิงก์อยู่บนหน้าจอ');expect(text).not.toContain('https://');
   });
 
+  it('removes Markdown decoration but keeps the spoken meaning',()=>{
+    const text=normalizeSpeechText('## **นัดหมาย**\n- วันที่ 7 ก.ย. 2569 เวลา 07:00 น.\n- ไป Big C');
+    expect(text).not.toContain('*');expect(text).not.toContain('#');expect(text).not.toContain('- วันที่');
+    expect(text).toContain('นัดหมาย');expect(text).toContain('กันยายน');expect(text).toContain('7 นาฬิกา');
+  });
+
+  it('speaks symbols only when the sentence is explicitly talking about symbols',()=>{
+    expect(normalizeSpeechText('หัวข้อ #งาน และ **สำคัญ**')).not.toContain('เครื่องหมายแฮช');
+    expect(normalizeSpeechText('ให้พิมพ์ # ตามด้วยชื่อหัวข้อ')).toContain('เครื่องหมายแฮช');
+    expect(normalizeSpeechText('ให้ใส่ * หน้าข้อความ')).toContain('เครื่องหมายดอกจัน');
+  });
+
   it('SMART mode shortens long technical output instead of reading code/logs verbatim',()=>{
     const text=smartSpeechText('npm test ผ่านแล้ว ```const x = 1``` '+('รายละเอียดทางเทคนิค '.repeat(40)));
     expect(text).toBe('ดำเนินการด้านเทคนิคแล้วครับ รายละเอียดอยู่บนหน้าจอ');

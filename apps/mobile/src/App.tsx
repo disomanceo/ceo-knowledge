@@ -16,7 +16,7 @@ import ResearchPage from './ResearchPage';
 import { chooseVoice, loadVoicePreferences, normalizeSpeechText, saveVoicePreferences, speechSynthesisSupported, speechTextForMode, splitSpeechText, type VoiceMode, type VoicePreferences } from './voice';
 
 type Tab = 'console' | 'chat' | 'today' | 'memory' | 'tasks' | 'graph' | 'drive' | 'devices' | 'approvals' | 'claims' | 'research';
-type ChatItem = { role: 'user' | 'ceo'; text: string; meta?: string; at?: number; context?: { sourceId?: string; query?: string; field?: string } };
+type ChatItem = { role: 'user' | 'ceo'; text: string; spokenText?: string; meta?: string; at?: number; context?: { sourceId?: string; query?: string; field?: string } };
 
 async function waitForRuntimeJob(id: string, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
@@ -93,7 +93,7 @@ function ChatPage() {
     try{sessionStorage.setItem('ceo-voice-activated-v1','1')}catch{}return true;
   };
   const setVoiceMode=(mode:VoiceMode)=>{if(mode==='off')stopVoice();setVoicePrefs(v=>({...v,mode}));setVoiceMenuOpen(false)};
-  const appendCeo=(text:string,meta:string,autoSpeak=true,context?:ChatItem['context'])=>{const item:ChatItem={role:'ceo',text,meta,at:Date.now(),...(context?{context}:{})};setItems(v=>[...v,item]);const mode=voicePrefsRef.current.mode;if(autoSpeak&&(mode==='auto'||mode==='smart'))setTimeout(()=>speakDevice(text,false),0)};
+  const appendCeo=(text:string,meta:string,autoSpeak=true,context?:ChatItem['context'])=>{const spokenText=normalizeSpeechText(text);const item:ChatItem={role:'ceo',text,spokenText,meta,at:Date.now(),...(context?{context}:{})};setItems(v=>[...v,item]);const mode=voicePrefsRef.current.mode;if(autoSpeak&&(mode==='auto'||mode==='smart'))setTimeout(()=>speakDevice(mode==='smart'?text:spokenText,false),0)};
   const clearLog=()=>{if(!window.confirm('เคลียร์ประวัติแชตในอุปกรณ์นี้?'))return;stopVoice();const id='mobile:'+crypto.randomUUID();setConversationId(id);try{localStorage.setItem(CHAT_ID_KEY,id);localStorage.removeItem(CHAT_LOG_KEY)}catch{}setItems([{...greeting,at:Date.now()}]);setProvider('AUTO · READY');setFollowLatest(true);setNewBelow(false)};
   async function send() {
     const text=message.trim();if(!text||busy)return;
@@ -122,7 +122,7 @@ function ChatPage() {
   return <div className="chat-shell flex flex-col min-h-0">
     <div className="flex items-center justify-between gap-3 pb-3"><div><div className="font-semibold">Ceo Chat / Auto Router</div><div className="muted text-[11px]">Knowledge ก่อน · AI เมื่อจำเป็น · เก็บ Chat Log ในอุปกรณ์</div></div><div className="flex items-center gap-2"><span className="badge">{provider}</span><button className="badge" onClick={clearLog}>เคลียร์ Log</button></div></div>
     <div ref={listRef} onScroll={e=>{const el=e.currentTarget,near=el.scrollHeight-el.scrollTop-el.clientHeight<90;setFollowLatest(near);if(near)setNewBelow(false)}} className="chat-log flex-1 min-h-0 overflow-auto space-y-3 pr-1">
-      {items.map((item,i)=><div key={(item.at||i)+'-'+i} className={'chat-bubble '+(item.role==='user'?'chat-user':'chat-ceo')}>{item.role==='ceo'?<><div><span className="chat-ceo-name">Ceo : </span>{item.text}</div>{item.meta&&<div className="chat-meta">{item.meta}</div>}{voicePrefs.mode!=='off'&&<div className="chat-voice-actions"><button className="voice-inline" title="ฟังคำตอบ" aria-label="ฟังคำตอบ" onClick={()=>speakDevice(item.text,true)} disabled={voiceState==='unsupported'}><Volume2 size={14}/></button>{voiceState==='speaking'&&<button className="voice-inline" title="หยุดเสียง" aria-label="หยุดเสียง" onClick={stopVoice}><Square size={12}/></button>}</div>}</>:item.text}</div>)}
+      {items.map((item,i)=><div key={(item.at||i)+'-'+i} className={'chat-bubble '+(item.role==='user'?'chat-user':'chat-ceo')}>{item.role==='ceo'?<><div><span className="chat-ceo-name">Ceo : </span>{item.text}</div>{item.meta&&<div className="chat-meta">{item.meta}</div>}{voicePrefs.mode!=='off'&&<div className="chat-voice-actions"><button className="voice-inline" title="ฟังคำตอบ" aria-label="ฟังคำตอบ" onClick={()=>speakDevice(item.spokenText||item.text,true)} disabled={voiceState==='unsupported'}><Volume2 size={14}/></button>{voiceState==='speaking'&&<button className="voice-inline" title="หยุดเสียง" aria-label="หยุดเสียง" onClick={stopVoice}><Square size={12}/></button>}</div>}</>:item.text}</div>)}
       {busy&&<div className="chat-bubble chat-ceo muted"><span className="chat-ceo-name">Ceo : </span>{thinking}</div>}
     </div>
     {newBelow&&<button className="chat-jump-latest" onClick={jumpLatest}>↓ ข้อความล่าสุด</button>}
