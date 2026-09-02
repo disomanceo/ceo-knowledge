@@ -1,7 +1,7 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
-import { cloudChatFallback, composeRecallAnswer, dedupeSemanticEvents, isBareRecallFieldQuestion, recallAction, recallAnswerField, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from './chat';
+import { cloudChatFallback, composeRecallAnswer, dedupeSemanticEvents, isBareRecallFieldQuestion, recallAction, recallActionMatches, recallAnswerField, recallMatchTokens, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from './chat';
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
@@ -54,6 +54,7 @@ function clean(value: unknown, max = 10_000): string { return String(value ?? ''
 function tags(value: unknown): string[] { return Array.isArray(value) ? [...new Set(value.map(v => clean(v, 100)).filter(Boolean))].slice(0, 40) : []; }
 function tokenDice(a:string,b:string):number{const x=clean(a,120).toLocaleLowerCase(),y=clean(b,120).toLocaleLowerCase();if(!x||!y)return 0;if(x===y)return 1;if(x.length<2||y.length<2)return 0;const grams=(s:string)=>{const out=new Map<string,number>();for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);out.set(g,(out.get(g)||0)+1)}return out},gx=grams(x),gy=grams(y);let hit=0;for(const [g,n] of gx){const m=gy.get(g)||0;hit+=Math.min(n,m)}return(2*hit)/([...gx.values()].reduce((a,b)=>a+b,0)+[...gy.values()].reduce((a,b)=>a+b,0));}
 function fuzzyRecallMatch(queryTokens:string[],row:any):number{if(!queryTokens.length)return 0;const norm=(v:string)=>v.toLocaleLowerCase().replace(/ดูหนัง|หนัง/g,'ภาพยนตร์').replace(/big\s*c|บิ๊ก\s*ซี/g,'bigc').replace(/รร\.?/g,'โรงเรียน ').replace(/โรงเรียน\s*วัด/g,'โรงเรียน ').replace(/(คาบ(?:ที่)?|ภาพยนตร์|bigc|ประเมิน|ส่ง|รับทุน|นิเทศ|โรงเรียน|ครู)/gu,' $1 ');const words=norm(clean([row?.title,row?.description,row?.location,row?.content].filter(Boolean).join(' '),5000)).replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').split(/\s+/).filter(Boolean);if(!words.length)return 0;const tokens=queryTokens.flatMap(token=>norm(token).split(/\s+/)).filter(Boolean);const scores=tokens.map(token=>Math.max(...words.map(word=>word.includes(token)||token.includes(word)?Math.min(1,Math.min(word.length,token.length)/Math.max(word.length,token.length)+.2):tokenDice(token,word))));return scores.reduce((a,b)=>a+b,0)/scores.length;}
+function isGenericActionCoverageQuery(message:string){const action=recallAction(message);if(action==='none')return false;const generic=new Set(['ประเมิน','pa','ส่ง','ส่งเล่ม','ส่งเอกสาร','เลี้ยง','เกษียณ','กิน','ประชุม','นัด','อบรม','สัมมนา','สอบ','ทดสอบ']);const specific=recallMatchTokens(message).filter(token=>!generic.has(token.toLocaleLowerCase()));return specific.length===0;}
 
 function bangkokDayRange(date = new Date()): { from: string; to: string } {
   const bangkok = new Date(date.getTime() + 7 * 60 * 60 * 1000);
@@ -143,7 +144,11 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
     eventOr ? rest<any[]>(env, token, `events${qs({ select:'*', status:'neq.cancelled', or:eventOr, order:'start_at.asc', limit:perTable })}`).catch(() => []) : Promise.resolve<any[]>([]),
     taskOr ? rest<any[]>(env, token, `tasks${qs({ select:'*', status:'neq.cancelled', or:taskOr, order:'due_at.asc.nullslast,updated_at.desc', limit:perTable })}`).catch(() => []) : Promise.resolve<any[]>([]),
   ]);
-  if(!eventRows.length&&structuredRecall&&recallTerms){
+  if(isGenericActionCoverageQuery(q)){
+    const action=recallAction(q),broadEvents=await rest<any[]>(env,token,`events${qs({select:'*',status:'neq.cancelled',order:'start_at.asc',limit:100})}`).catch(()=>[]);
+    const existingIds=new Set(eventRows.map(row=>String(row.id||'')));
+    for(const row of broadEvents)if(recallActionMatches(action,row)&&!existingIds.has(String(row.id||''))){eventRows.push(row);existingIds.add(String(row.id||''));}
+  }  if(!eventRows.length&&structuredRecall&&recallTerms){
     const fuzzyTokens=recallTerms.toLocaleLowerCase().split(/\s+/).filter(token=>token.length>=2);
     const broadEvents=await rest<any[]>(env,token,`events${qs({select:'*',status:'neq.cancelled',order:'start_at.asc',limit:100})}`).catch(()=>[]);
     const fuzzy=broadEvents.map(row=>({row,score:fuzzyRecallMatch(fuzzyTokens,row)})).filter(item=>item.score>=0.68).sort((a,b)=>b.score-a.score).slice(0,perTable);
@@ -174,8 +179,9 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   const tokens = recallTerms.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const lockedRows=preferredSourceId?rows.filter(row=>String(row.id||row.node_id||'')===preferredSourceId):[];
   const strictRows = rows.filter(row => recallSubjectMatches(q,row));
+  const coverageRows=isGenericActionCoverageQuery(q)?rows.filter(row=>recallActionMatches(recallAction(q),row)):[];
   const fuzzyRows=!strictRows.length&&structuredRecall?rows.map(row=>({row,score:fuzzyRecallMatch(tokens,row)})).filter(item=>item.score>=0.68).sort((a,b)=>b.score-a.score).map(item=>({...item.row,_fuzzyScore:item.score})):[];
-  const candidateRows = lockedRows.length ? [...lockedRows,...strictRows.filter(row=>!lockedRows.includes(row))] : strictRows.length ? strictRows : fuzzyRows.length ? fuzzyRows : rows;
+  const candidateRows = lockedRows.length ? [...lockedRows,...coverageRows.filter(row=>!lockedRows.includes(row)),...strictRows.filter(row=>!lockedRows.includes(row)&&!coverageRows.includes(row))] : coverageRows.length ? coverageRows : strictRows.length ? strictRows : fuzzyRows.length ? fuzzyRows : rows;
   const ranked = candidateRows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
     const body = clean(row.content || row.summary || row.rationale || '', 5000).toLocaleLowerCase();
@@ -356,7 +362,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V4.1', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'v4-hybrid-semantic-interpreter+evidence-pack+grounding-guard', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V4.2', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'v4-hybrid-semantic-interpreter+evidence-pack+grounding-guard', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -375,7 +381,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
-    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V4.1',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'v4-semantic-interpreter+compact-context+result-set',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V4.2',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'v4-semantic-interpreter+compact-context+result-set',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -585,11 +591,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if(saveStatusQuestion&&previousUser){const verify=await searchKnowledge(env,token,previousUser.text,5,recallAnswerField(previousUser.text));const matched=verify.results.filter((row:any)=>recallSubjectMatches(previousUser.text,row));const first=matched[0]||verify.results[0];const sourceId=clean(first?.id||first?.node_id,200);return ok({intent:'remember-status',answer:first?'บันทึกไว้แล้วครับ':'ยังไม่พบว่าข้อความก่อนหน้าถูกบันทึกใน Ceo Knowledge ครับ',mode:'knowledge',provider:'knowledge',ai:false,search:verify,autoMemory:null,context:{conversationId:clean(body.conversationId,200),query:previousUser.text,field:'status',sourceId}});}
       const bareField=isBareRecallFieldQuestion(message);
       const bareExpansion=/^\s*(?:อะไรบ้าง|มีอะไรบ้าง|ไหนบ้าง)\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/u.test(message);
+      const coverageFollowUp=/^\s*(?:แค่นี้(?:เหรอ|หรอ|เองเหรอ)?|มีอีก(?:ไหม|มั้ย|หรือเปล่า)?|แล้ว(?:วัน|ที่|รายการ)?อื่น(?:มี)?(?:อีก)?(?:ไหม|มั้ย|หรือเปล่า)?|แล้วมีอีก(?:ไหม|มั้ย|หรือเปล่า)?)\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/u.test(message)||/(?:วันอื่น|รายการอื่น).*(?:มี)?(?:ประเมิน|อีก)/u.test(message);
       const bareSchoolList=/^\s*(?:รร\.?|โรงเรียน)\s*(?:ไหน|อะไร)(?:บ้าง)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(message);
       const listContextQuery=bareSchoolList&&previousUser?`${previousUser.text.replace(/กี่\s*โรงเรียน|จำนวน\s*โรงเรียน|ทั้งหมดกี่\s*โรงเรียน/gi,'').trim()} โรงเรียนไหนบ้าง`:'';
       const legacyContextualQuery=listContextQuery||(bareField&&previousUser?previousUser.text:message);
       const hasDateDiscriminator=/(?:วันที่|วัน)\s*\d{1,2}/u.test(message);
-      const hardTopicSwitch=stateV3.mode==='NEW_TOPIC'&&!bareField&&!bareExpansion&&!bareSchoolList&&!hasDateDiscriminator;
+      const hardTopicSwitch=stateV3.mode==='NEW_TOPIC'&&!bareField&&!bareExpansion&&!coverageFollowUp&&!bareSchoolList&&!hasDateDiscriminator;
       const contextInput=hardTopicSwitch?[]:recentContext;
       const semanticFrame=await interpretSemanticContext(env,message,contextInput,{model:backgroundModel});
       const contextResolution={attempted:semanticFrame.aiRequired,usedAI:semanticFrame.aiUsed,source:semanticFrame.interpreterSource as any,confidence:semanticFrame.confidence,ambiguous:semanticFrame.ambiguous,resolvedQuery:semanticFrame.standaloneQuery,subject:semanticFrame.topic,intent:semanticFrame.intent,answerField:semanticFrame.requestedField,dependsOnPriorContext:semanticFrame.usePriorContext,reason:semanticFrame.reason,clarificationRequired:semanticFrame.aiRequired&&semanticFrame.confidence<0.6};
@@ -609,9 +616,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       const explicitContextField=contextField(message);
       const carriedContextField=explicitContextField!=='general'?explicitContextField:(/(?:วันที่|วัน)\s*\d{1,2}/u.test(message)&&['date','time','location','person','status'].includes(clean(previousResultTurn?.field,40))?clean(previousResultTurn?.field,40) as any:'general');
-      const resultSetReuseAllowed=!hardTopicSwitch&&(bareField||bareExpansion||bareSchoolList||hasDateDiscriminator||['FIELD_FOLLOW_UP','FOLLOW_UP','ENTITY_SWITCH'].includes(stateV3.mode));
+      const resultSetReuseAllowed=!hardTopicSwitch&&(bareField||bareExpansion||coverageFollowUp||bareSchoolList||hasDateDiscriminator||['FIELD_FOLLOW_UP','FOLLOW_UP','ENTITY_SWITCH'].includes(stateV3.mode));
       const selectedContextRef=resultSetReuseAllowed?selectContextResult(message,priorResultSet):null;
-      if(resultSetReuseAllowed&&priorResultSet.length&&(carriedContextField!=='general'||bareExpansion||bareSchoolList)){
+      if(resultSetReuseAllowed&&priorResultSet.length&&(carriedContextField!=='general'||bareExpansion||coverageFollowUp||bareSchoolList)){
         if(selectedContextRef){
           const contextRows=await loadContextResultRefs(env,token,[selectedContextRef]);
           if(contextRows[0])contextRows[0]._sourceLocked=true;
@@ -622,8 +629,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
           }
           const fieldMessage=carriedContextField==='location'?`${message} ที่ไหน`:carriedContextField==='person'?`${message} ไปกับใคร`:carriedContextField==='time'?`${message} กี่โมง`:carriedContextField==='date'?`${message} วันไหน`:message;
           const contextualAnswer=composeRecallAnswer(fieldMessage,contextRows);          if(contextualAnswer.confident)return ok({intent:'result-set-followup',answer:contextualAnswer.answer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:selectedContextRef.id,resultSet:priorResultSet}});
-        }else if((bareField||bareExpansion||bareSchoolList)&&priorResultSet.length>1){
-          const contextRows=await loadContextResultRefs(env,token,priorResultSet),listAnswer=contextListAnswer(message,contextRows);
+        }else if((bareField||bareExpansion||coverageFollowUp||bareSchoolList)&&priorResultSet.length>1){
+          const contextRows=await loadContextResultRefs(env,token,priorResultSet),coverageMessage=coverageFollowUp?(clean(previousResultTurn?.field,40)==='date'||/วัน/u.test(message)?'วันไหนบ้าง':clean(previousResultTurn?.field,40)==='location'?'ที่ไหนบ้าง':'อะไรบ้าง'):message,listAnswer=contextListAnswer(coverageMessage,contextRows);
           if(listAnswer)return ok({intent:'result-set-expand',answer:listAnswer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:'',resultSet:priorResultSet}});
         }
       }
