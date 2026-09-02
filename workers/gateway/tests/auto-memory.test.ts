@@ -372,6 +372,38 @@ describe('Ceo Knowledge Auto Memory central API',()=>{
     expect(payload.data.written).toBeNull();
     expect(calls).toHaveLength(1);
   });
+  it('uses the current replica revision when rewriting an existing event mirror',async()=>{
+    const calls:any[]=[];
+    vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url,method,body});
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-r',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
+      if(url.includes('/rest/v1/events?')&&method==='GET')return json([{id:'evt-r',title:'รับทุน ปตท.',description:'วันที่ 11 กันยายน 2569 รับทุน ปตท.',start_at:'2026-09-11T02:00:00Z',status:'planned',metadata:{}}]);
+      if(url.includes('/rest/v1/events?')&&method==='PATCH')return json([{id:'evt-r',title:'รับทุน ปตท.',description:body.description,start_at:'2026-09-11T02:00:00Z',status:'planned',metadata:body.metadata}]);
+      if(url.includes('/rest/v1/memory_nodes?')&&method==='GET')return json([{node_id:'evt_existing',revision:3,content_hash:'old-hash',valid_from:'2026-09-01T00:00:00Z',metadata:{}}]);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:body?.p_snapshot?.revision});
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const result=await autoCapture(env,'user-token',{message:'จำไว้ว่า 11 ก.ย. 2569 รับทุน ปตท. ครูอ๊อฟไปด้วย',source:'chatgpt',sourceRef:'evt-r',conversationId:'rev-chat'});
+    expect(result.written?.kind).toBe('event');
+    const replica=calls.find(x=>x.url.endsWith('/rest/v1/rpc/memory_replica_apply'));
+    expect(replica.body.p_base_revision).toBe(3);expect(replica.body.p_snapshot.revision).toBe(4);expect(replica.body.p_snapshot.schemaVersion).toBe(3);expect(replica.body.p_snapshot.canonicalKey).toBeTruthy();
+  });
+
+  it('searches before creating semantically duplicate tasks',async()=>{
+    const calls:any[]=[];
+    vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url,method,body});
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='GET')return json([]);
+      if(url.includes('/rest/v1/conversation_summaries?')&&method==='POST')return json([{id:'conv-t',conversation_key:body.conversation_key,summary:body.summary,metadata:body.metadata}]);
+      if(url.includes('/rest/v1/tasks?')&&method==='GET')return json([{id:'task17',title:'ส่งเล่ม PA',description:'วันที่ 17 กันยายน 2569 ส่งเล่ม PA ให้สำนักงานเขต',due_at:'2026-09-17T02:00:00Z',status:'open',metadata:{}}]);
+      if(url.includes('/rest/v1/memory_nodes?')&&method==='GET')return json([]);
+      if(url.endsWith('/rest/v1/rpc/memory_replica_apply')&&method==='POST')return json({outcome:'accepted',nodeId:body?.p_snapshot?.nodeId,revision:1});
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const result=await autoCapture(env,'user-token',{message:'จำไว้ว่า วันที่ 17 กันยายน 2569 ต้องส่งเล่ม PA ให้สำนักงานเขต',source:'chatgpt',conversationId:'task-dup'});
+    expect(result.written?.kind).toBe('task');expect(result.written?.semanticDuplicate).toBe(true);expect(result.written?.id).toBe('task17');
+    expect(calls.some(x=>x.url.includes('/rest/v1/tasks?select=*')&&x.method==='POST')).toBe(false);
+  });
+
   it('writes explicit memory replica as permanent plus pinned',async()=>{
     const calls:any[]=[];
     vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url,method,body});

@@ -14,11 +14,13 @@ import { rerankMemoryCandidates } from './memory-reranker';
 import { deriveConversationStateV3 } from './conversation-state-v3';
 import { applyActiveEventRelation } from './memory-relations';
 import { recordCorrection, retrievalTelemetry } from './retrieval-telemetry';
+import { evaluateRetrieval } from './retrieval-eval';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
 import { handleMcpRequest, type McpToolCallContext } from './mcp';
 import { applyMemoryMaintenance, manageMemoryNode, planMemoryMaintenance } from './memory-gardener';
+import { canonicalKeyFor, chooseCanonicalCandidate, contentEquivalent } from './memory-metabolism';
 
 const corsHeaders: HeadersInit = {
   'access-control-allow-origin': '*',
@@ -47,7 +49,7 @@ function qs(params: Record<string, string | number | null | undefined>): string 
 function clean(value: unknown, max = 10_000): string { return String(value ?? '').replace(/\u0000/g, '').trim().slice(0, max); }
 function tags(value: unknown): string[] { return Array.isArray(value) ? [...new Set(value.map(v => clean(v, 100)).filter(Boolean))].slice(0, 40) : []; }
 function tokenDice(a:string,b:string):number{const x=clean(a,120).toLocaleLowerCase(),y=clean(b,120).toLocaleLowerCase();if(!x||!y)return 0;if(x===y)return 1;if(x.length<2||y.length<2)return 0;const grams=(s:string)=>{const out=new Map<string,number>();for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);out.set(g,(out.get(g)||0)+1)}return out},gx=grams(x),gy=grams(y);let hit=0;for(const [g,n] of gx){const m=gy.get(g)||0;hit+=Math.min(n,m)}return(2*hit)/([...gx.values()].reduce((a,b)=>a+b,0)+[...gy.values()].reduce((a,b)=>a+b,0));}
-function fuzzyRecallMatch(queryTokens:string[],row:any):number{if(!queryTokens.length)return 0;const words=clean([row?.title,row?.description,row?.location,row?.content].filter(Boolean).join(' '),5000).toLocaleLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').split(/\s+/).filter(Boolean);if(!words.length)return 0;const scores=queryTokens.map(token=>Math.max(...words.map(word=>word.includes(token)||token.includes(word)?Math.min(1,Math.min(word.length,token.length)/Math.max(word.length,token.length)+.2):tokenDice(token,word))));return scores.reduce((a,b)=>a+b,0)/scores.length;}
+function fuzzyRecallMatch(queryTokens:string[],row:any):number{if(!queryTokens.length)return 0;const norm=(v:string)=>v.toLocaleLowerCase().replace(/ดูหนัง|หนัง/g,'ภาพยนตร์').replace(/big\s*c|บิ๊ก\s*ซี/g,'bigc').replace(/รร\.?/g,'โรงเรียน ').replace(/โรงเรียน\s*วัด/g,'โรงเรียน ').replace(/(คาบ(?:ที่)?|ภาพยนตร์|bigc|ประเมิน|ส่ง|รับทุน|นิเทศ|โรงเรียน|ครู)/gu,' $1 ');const words=norm(clean([row?.title,row?.description,row?.location,row?.content].filter(Boolean).join(' '),5000)).replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').split(/\s+/).filter(Boolean);if(!words.length)return 0;const tokens=queryTokens.flatMap(token=>norm(token).split(/\s+/)).filter(Boolean);const scores=tokens.map(token=>Math.max(...words.map(word=>word.includes(token)||token.includes(word)?Math.min(1,Math.min(word.length,token.length)/Math.max(word.length,token.length)+.2):tokenDice(token,word))));return scores.reduce((a,b)=>a+b,0)/scores.length;}
 
 function bangkokDayRange(date = new Date()): { from: string; to: string } {
   const bangkok = new Date(date.getTime() + 7 * 60 * 60 * 1000);
@@ -131,6 +133,12 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
     const fuzzy=broadEvents.map(row=>({row,score:fuzzyRecallMatch(fuzzyTokens,row)})).filter(item=>item.score>=0.68).sort((a,b)=>b.score-a.score).slice(0,perTable);
     eventRows.push(...fuzzy.map(item=>({...item.row,_fuzzyScore:item.score})));
   }
+  if(!taskRows.length&&structuredRecall&&recallTerms){
+    const fuzzyTokens=recallTerms.toLocaleLowerCase().split(/\s+/).filter(token=>token.length>=2);
+    const broadTasks=await rest<any[]>(env,token,`tasks${qs({select:'*',status:'neq.cancelled',order:'updated_at.desc',limit:100})}`).catch(()=>[]);
+    const fuzzy=broadTasks.map(row=>({row,score:fuzzyRecallMatch(fuzzyTokens,row)})).filter(item=>item.score>=0.68).sort((a,b)=>b.score-a.score).slice(0,perTable);
+    taskRows.push(...fuzzy.map(item=>({...item.row,_fuzzyScore:item.score})));
+  }
   rows.push(...eventRows.map(row => ({ ...row, kind:'events', content:clean([row.description,row.location,row.start_at].filter(Boolean).join(' · '),5000), importance:2, updated_at:row.updated_at || row.start_at || row.created_at })));
   rows.push(...taskRows.map(row => ({ ...row, kind:'tasks', content:clean([row.description,row.waiting_for,row.due_at].filter(Boolean).join(' · '),5000), importance:2 })));
   if(preferredSourceId){
@@ -142,7 +150,7 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
     rows.push(...lockedEvents.map(row=>({...row,kind:'events',content:clean([row.description,row.location,row.start_at].filter(Boolean).join(' · '),5000),importance:3,_sourceLocked:true})),...lockedTasks.map(row=>({...row,kind:'tasks',content:clean([row.description,row.waiting_for,row.due_at].filter(Boolean).join(' · '),5000),importance:3,_sourceLocked:true})),...lockedMemories.map(row=>({...row,kind:'memories',_sourceLocked:true})));
   }
   const replicaOr = recallTerms ? searchOr(['title','content'], recallTerms) : '';
-  const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,tier,retention_policy,source_kind,truth_status,metadata,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
+  const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,tier,retention_policy,source_kind,truth_status,lifecycle_status,valid_from,valid_to,superseded_by,canonical_key,metadata,created_at,updated_at', node_type:'eq.memory', lifecycle_status:'in.(current,conflicting)', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
   const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
   const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')) && !(row.kind === 'memories' && memoryLooksLikeQuestion(row)));
   rows.length = 0;
@@ -182,42 +190,30 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   return { query: q, count: ranked.length, results: ranked };
 }
 
-async function saveMemory(env: Env, token: string, body: any) {
-  const content = clean(body.content, 20_000);
-  if (!content) throw Object.assign(new Error('MEMORY_CONTENT_REQUIRED'), { status: 400 });
-  const title = clean(body.title, 300);
-  const memoryType = ['fact', 'preference', 'rule', 'decision', 'context', 'note'].includes(body.memoryType) ? body.memoryType : 'note';
-  const scope = ['global', 'project', 'session'].includes(body.scope) ? body.scope : 'global';
-  const fingerprint = await sha256Hex(['memory', memoryType, scope, clean(body.projectId, 80), title, content].join('\u001f').toLocaleLowerCase().replace(/\s+/g, ' ').trim());
-  const payload = {
-    title,
-    content,
-    memory_type: memoryType,
-    importance: Math.max(0, Math.min(3, Math.round(Number(body.importance ?? 2)))),
-    scope,
-    confidence: Math.max(0, Math.min(1, Number(body.confidence ?? 1))),
-    status: 'active',
-    tags: tags(body.tags),
-    fingerprint,
-    ...(body.projectId ? { project_id: clean(body.projectId, 80) } : {}),
-  };
-  const rows = await rest<MemoryRecord[]>(env, token, `memories${qs({ select: '*', on_conflict: 'user_id,fingerprint' })}`, { method: 'POST', body: payload, prefer: 'resolution=merge-duplicates,return=representation' });
-  const memory = rows[0] || null;
-  if (!memory) return null;
-  const nodeDigest = await sha256Hex('memory\u001f' + fingerprint);
-  const nodeId = 'mem_' + nodeDigest.slice(0, 20);
-  const contentHash = await sha256Hex(content);
-  const eventDigest = await sha256Hex([nodeId, '1', contentHash].join('\u001f'));
-  const snapshot = {
-    nodeId, nodeType:'memory', referencePath:`ceo://memory/${nodeId}`, title, content, projectId:clean(body.projectId,80),
-    memoryKind: memoryType === 'rule' ? 'procedural' : 'semantic', sourceKind:'user', truthStatus:'reported', evidenceStatus:'single_source',
-    importance:payload.importance, retentionPolicy:'standard', tier:'hot', topicIds:[], entityIds:[], sourceRefs:[memory.id], derivedFrom:[],
-    eventAt:null, datePrecision:null, revision:1, contentHash, schemaVersion:2, metadata:{ legacyMemoryId:memory.id, origin:clean(body.origin,40)||'mobile' },
-  };
-  const replica = await rpc<any>(env, token, 'memory_replica_apply', { p_snapshot:snapshot, p_base_revision:0, p_client_event_id:'mem_evt_' + eventDigest.slice(0,24), p_device_id:null });
-  return { ...memory, node_id:nodeId, replica };
+async function writeMemoryReplica(env:Env,token:string,memory:any,input:{title:string;content:string;memoryType:string;importance:number;projectId?:string;origin?:string}){
+  const digest=await sha256Hex(`memory-object\u001f${memory.id}`),nodeId=`mem_${digest.slice(0,20)}`,contentHash=await sha256Hex(input.content);
+  const currentRows=await rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,revision,content_hash,valid_from,metadata',node_id:`eq.${nodeId}`,limit:1})}`).catch(()=>[]),current=currentRows[0]||null;
+  const baseRevision=Math.max(0,Number(current?.revision||0)),revision=baseRevision+1,canonicalKey=canonicalKeyFor({kind:'memory_nodes',title:input.title,content:input.content});
+  const validFrom=current?.valid_from||new Date().toISOString(),eventDigest=await sha256Hex([nodeId,String(revision),contentHash].join('\u001f'));
+  const snapshot={nodeId,nodeType:'memory',objectType:'memory',objectId:memory.id,referencePath:`ceo://memory/${memory.id}`,title:input.title,content:input.content,projectId:clean(input.projectId,80),memoryKind:input.memoryType==='rule'?'procedural':'semantic',sourceKind:'user',truthStatus:'reported',evidenceStatus:'single_source',importance:input.importance,retentionPolicy:'standard',tier:'hot',topicIds:[],entityIds:[],sourceRefs:[memory.id],derivedFrom:[],eventAt:null,datePrecision:null,revision,contentHash,schemaVersion:3,canonicalKey,lifecycleStatus:'current',validFrom,validTo:null,supersededBy:null,metadata:{legacyMemoryId:memory.id,origin:clean(input.origin,40)||'mobile',canonicalKey,lifecycle:'current',validFrom}};
+  const replica=await rpc<any>(env,token,'memory_replica_apply',{p_snapshot:snapshot,p_base_revision:baseRevision,p_client_event_id:'mem_evt_'+eventDigest.slice(0,24),p_device_id:null});
+  return{nodeId,replica};
 }
-function memoryReplicaAsRecord(row: any): MemoryRecord & { replica: true; node_id: string; reference_path?: string; revision?: number; evidence_status?: string } {
+
+async function saveMemory(env: Env, token: string, body: any) {
+  const content=clean(body.content,20_000);if(!content)throw Object.assign(new Error('MEMORY_CONTENT_REQUIRED'),{status:400});
+  const title=clean(body.title,300),memoryType=['fact','preference','rule','decision','context','note'].includes(body.memoryType)?body.memoryType:'note',scope=['global','project','session'].includes(body.scope)?body.scope:'global';
+  const incoming={kind:'memory_nodes',title,content,memory_kind:memoryType,project_ref:clean(body.projectId,80)};
+  const existingNodes=await rest<any[]>(env,token,`memory_nodes${qs({select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,reference_path,tier,retention_policy,source_kind,truth_status,evidence_status,lifecycle_status,valid_from,valid_to,superseded_by,canonical_key,metadata,created_at,updated_at',node_type:'eq.memory',lifecycle_status:'in.(current,conflicting)',order:'updated_at.desc',limit:100})}`).catch(()=>[]);
+  const canonical=chooseCanonicalCandidate(incoming,existingNodes.map(row=>({...row,kind:'memory_nodes'})));
+  if(canonical&&(canonical.score>=.97||contentEquivalent(incoming,canonical.row))){return{...memoryReplicaAsRecord(canonical.row),deduplicated:true,canonicalScore:canonical.score};}
+  const fingerprint=await sha256Hex(['memory',memoryType,scope,clean(body.projectId,80),title,content].join('\u001f').toLocaleLowerCase().replace(/\s+/g,' ').trim());
+  const payload={title,content,memory_type:memoryType,importance:Math.max(0,Math.min(3,Math.round(Number(body.importance??2)))),scope,confidence:Math.max(0,Math.min(1,Number(body.confidence??1))),status:'active',tags:tags(body.tags),fingerprint,...(body.projectId?{project_id:clean(body.projectId,80)}:{})};
+  const rows=await rest<MemoryRecord[]>(env,token,`memories${qs({select:'*',on_conflict:'user_id,fingerprint'})}`,{method:'POST',body:payload,prefer:'resolution=merge-duplicates,return=representation'}),memory=rows[0]||null;if(!memory)return null;
+  const mirror=await writeMemoryReplica(env,token,memory,{title,content,memoryType,importance:payload.importance,projectId:body.projectId,origin:body.origin});
+  return{...memory,node_id:mirror.nodeId,replica:mirror.replica};
+}
+function memoryReplicaAsRecord(row: any): MemoryRecord & { replica: true; node_id: string; reference_path?: string; revision?: number; evidence_status?: string; lifecycle_status?:string; valid_from?:string|null; valid_to?:string|null; superseded_by?:string|null; canonical_key?:string; source_refs?:string[] } {
   return {
     id: String(row.node_id || ''),
     title: clean(row.title, 300),
@@ -234,6 +230,12 @@ function memoryReplicaAsRecord(row: any): MemoryRecord & { replica: true; node_i
     reference_path: String(row.reference_path || ''),
     revision: Number(row.revision || 1),
     evidence_status: String(row.evidence_status || 'unverified'),
+    lifecycle_status:String(row.lifecycle_status||row?.metadata?.lifecycle||'current'),
+    valid_from:row.valid_from||row?.metadata?.validFrom||null,
+    valid_to:row.valid_to||row?.metadata?.validTo||null,
+    superseded_by:row.superseded_by||row?.metadata?.supersededBy||null,
+    canonical_key:String(row.canonical_key||row?.metadata?.canonicalKey||''),
+    source_refs:Array.isArray(row.source_refs)?row.source_refs:[],
   };
 }
 
@@ -244,7 +246,8 @@ function memoryNodeSnapshot(row: any) {
     memoryKind:row.memory_kind||null,sourceKind:row.source_kind||'user',truthStatus:row.truth_status||'reported',evidenceStatus:row.evidence_status||'unverified',
     importance:Number(row.importance||0),retentionPolicy:row.retention_policy||'standard',tier:row.tier||'hot',topicIds:Array.isArray(row.topic_ids)?row.topic_ids:[],
     entityIds:Array.isArray(row.entity_ids)?row.entity_ids:[],sourceRefs:Array.isArray(row.source_refs)?row.source_refs:[],derivedFrom:Array.isArray(row.derived_from)?row.derived_from:[],
-    eventAt:row.event_at||null,datePrecision:row.date_precision||null,revision:Number(row.revision||1),contentHash:String(row.content_hash||''),schemaVersion:Number(row.schema_version||2),
+    eventAt:row.event_at||null,datePrecision:row.date_precision||null,revision:Number(row.revision||1),contentHash:String(row.content_hash||''),schemaVersion:Number(row.schema_version||3),
+    canonicalKey:String(row.canonical_key||row?.metadata?.canonicalKey||''),lifecycleStatus:String(row.lifecycle_status||row?.metadata?.lifecycle||'current'),validFrom:row.valid_from||row?.metadata?.validFrom||null,validTo:row.valid_to||row?.metadata?.validTo||null,supersededBy:row.superseded_by||row?.metadata?.supersededBy||null,
     metadata:row.metadata&&typeof row.metadata==='object'?row.metadata:{},createdAt:row.created_at,updatedAt:row.updated_at,
   };
 }
@@ -337,7 +340,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3.1', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -356,7 +359,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
-    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+quality-gate+constrained-ai-judge',speech:'structured-display-spoken-chunks'});
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3.1',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -365,6 +368,13 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok(result, body?.dryRun || (!result.written && !result.archive) ? 200 : 201);
     }
 
+    if (url.pathname === '/api/memory/eval' && request.method === 'POST') {
+      const body=await jsonBody<any>(request),cases=Array.isArray(body?.cases)?body.cases.slice(0,200):[];
+      if(!cases.length)throw Object.assign(new Error('RETRIEVAL_EVAL_CASES_REQUIRED'),{status:400});
+      const metrics=evaluateRetrieval(cases),suite=clean(body?.suite,100)||'manual';
+      await rest<any[]>(env,token,'retrieval_evaluations?select=id',{method:'POST',body:{suite,metrics,cases},prefer:'return=minimal'}).catch(()=>[]);
+      return ok({suite,...metrics});
+    }
     if (url.pathname === '/api/memory/maintenance/plan' && request.method === 'GET') {
       const plan=await planMemoryMaintenance(env,token,{limit:safeLimit(url.searchParams.get('limit'),250,500)});
       return ok(plan);
@@ -386,22 +396,24 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const query = clean(url.searchParams.get('q'), 240), limit = safeLimit(url.searchParams.get('limit'), 30, 60), offset = Math.max(0,Math.min(5000,Number(url.searchParams.get('offset')||0)||0));
       const filter = clean(url.searchParams.get('filter'),30), fetchLimit=Math.min(250,offset+limit+30);
       const or = query ? searchOr(['title', 'content'], query) : '';
+      const lifecycleFilter=filter==='history'?{}:{lifecycle_status:'in.(current,conflicting)'};
       const [legacy, replicas] = await Promise.all([
         rest<MemoryRecord[]>(env, token, `memories${qs({ select: '*', status: 'eq.active', ...(or ? { or } : {}), order: 'updated_at.desc', limit:fetchLimit })}`),
-        rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,revision,event_at,tier,retention_policy,source_kind,metadata,created_at,updated_at', node_type:'eq.memory', ...(or ? { or } : {}), order:'updated_at.desc', limit:fetchLimit })}`).catch(() => []),
+        rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,revision,event_at,tier,retention_policy,source_kind,lifecycle_status,valid_from,valid_to,superseded_by,canonical_key,metadata,created_at,updated_at', node_type:'eq.memory', ...lifecycleFilter, ...(or ? { or } : {}), order:'updated_at.desc', limit:fetchLimit })}`).catch(() => []),
       ]);
       const mirrored = new Set(replicas.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
       const combined:any[]=[...replicas.map(row=>({...memoryReplicaAsRecord(row),event_at:row.event_at||null,tier:row.tier||'hot',retention_policy:row.retention_policy||'standard',source_kind:row.source_kind||'',metadata:row.metadata||{}})), ...legacy.filter(row => !mirrored.has(row.id))];
       const hiddenQuestionCount=combined.filter(memoryLooksLikeQuestion).length;
       const raw:any[]=combined.filter(row=>!memoryLooksLikeQuestion(row))
-        .filter(row=>{const m=row?.metadata&&typeof row.metadata==='object'?row.metadata:{};if(filter==='archived')return m.archived===true;if(filter==='duplicates')return Boolean(m.canonicalOf);if(m.archived===true)return false;if(filter==='important')return Number(row.importance)>=2;if(filter==='today')return Date.parse(row.updated_at)>=Date.parse(bangkokDayRange().from);if(filter==='pinned')return row.tier==='pinned'||m.pinned===true;if(filter==='temporary')return row.retention_policy==='temporary'||['daily_log','consolidation'].includes(String(m.retention||''));return true})
+        .filter(row=>{const m=row?.metadata&&typeof row.metadata==='object'?row.metadata:{},life=String(row.lifecycle_status||m.lifecycle||'current');if(filter==='history')return !['current','conflicting'].includes(life);if(filter==='archived')return m.archived===true;if(filter==='duplicates')return Boolean(m.canonicalOf);if(m.archived===true)return false;if(filter==='important')return Number(row.importance)>=2;if(filter==='today')return Date.parse(row.updated_at)>=Date.parse(bangkokDayRange().from);if(filter==='pinned')return row.tier==='pinned'||m.pinned===true;if(filter==='temporary')return row.retention_policy==='temporary'||['daily_log','consolidation'].includes(String(m.retention||''));return true})
         .sort((x,y)=>String(y.updated_at||'').localeCompare(String(x.updated_at||'')));
       const groups=new Map<string,any>();
       for(const row of raw){const key=clean(row.content||row.title,2000).toLocaleLowerCase().replace(/^(?:memory|note)\s*:\s*/i,'').replace(/[\s\p{P}]+/gu,' ').trim();if(!key)continue;const existing=groups.get(key);if(existing){existing.repeat_count=(existing.repeat_count||1)+1;if(String(row.updated_at)>String(existing.updated_at))Object.assign(existing,{...row,repeat_count:existing.repeat_count})}else groups.set(key,{...row,repeat_count:1})}
       const consolidated=[...groups.values()];
       const memories=consolidated.slice(offset,offset+limit),hasMore=consolidated.length>offset+limit||legacy.length===fetchLimit||replicas.length===fetchLimit;
       return ok({ memories, replicaCount:replicas.length, hiddenQuestionCount, offset, nextOffset:hasMore?offset+memories.length:null, hasMore, consolidatedCount:consolidated.length });
-    }    if (url.pathname === '/api/memories' && request.method === 'POST') return ok(await saveMemory(env, token, await jsonBody<any>(request)), 201);
+    }
+    if (url.pathname === '/api/memories' && request.method === 'POST') return ok(await saveMemory(env, token, await jsonBody<any>(request)), 201);
     const forgetMatch = url.pathname.match(/^\/api\/memories\/([0-9a-f-]{36})\/forget$/i);
     if (forgetMatch && request.method === 'POST') {
       const rows = await rest<MemoryRecord[]>(env, token, `memories${qs({ id: `eq.${forgetMatch[1]}`, select: '*' })}`, { method: 'PATCH', body: { status: 'forgotten' }, prefer: 'return=representation' });
@@ -413,6 +425,11 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if (Number.isNaN(Date.parse(after))) throw Object.assign(new Error('MEMORY_AFTER_INVALID'), { status:400 });
       const replicas = await rpc<any[]>(env, token, 'memory_replica_pull', { p_after:new Date(after).toISOString(), p_limit:safeLimit(url.searchParams.get('limit'),200,500) });
       return ok({ after, replicas:Array.isArray(replicas) ? replicas : [] });
+    }
+    if (url.pathname === '/api/memory/supersede' && request.method === 'POST') {
+      const body=await jsonBody<any>(request),oldNodeId=clean(body?.oldNodeId,160),newNodeId=clean(body?.newNodeId,160);
+      if(!oldNodeId||!newNodeId)throw Object.assign(new Error('MEMORY_SUPERSEDE_IDS_REQUIRED'),{status:400});
+      return ok(await rpc<any>(env,token,'memory_supersede',{p_old_node_id:oldNodeId,p_new_node_id:newNodeId,p_reason:clean(body?.reason,500)}));
     }
     if (url.pathname === '/api/memory/conflicts' && request.method === 'GET') {
       const status = clean(url.searchParams.get('status'),20) || 'pending';
@@ -443,13 +460,18 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/claims' && request.method === 'POST') {
       const body=await jsonBody<any>(request),claim=clean(body.claim||body.content,20000),projectId=clean(body.projectId,160);
       if(!claim)throw Object.assign(new Error('CLAIM_CONTENT_REQUIRED'),{status:400});
-      const digest=await sha256Hex(['claim',projectId,claim.toLocaleLowerCase().replace(/\s+/g,' ').trim()].join('\u001f'));
-      const nodeId='claim_'+digest.slice(0,20),contentHash=await sha256Hex(claim),eventDigest=await sha256Hex([nodeId,'1',contentHash].join('\u001f'));
-      const snapshot={nodeId,nodeType:'claim',referencePath:`ceo://claim/${nodeId}`,title:clean(body.title,300)||claim.slice(0,120),content:claim,projectId,memoryKind:'semantic',sourceKind:clean(body.sourceKind,40)||'user',truthStatus:clean(body.truthStatus,40)||'reported',evidenceStatus:'unverified',importance:Math.max(0,Math.min(3,Math.round(Number(body.importance??2)))),retentionPolicy:'standard',tier:'hot',topicIds:Array.isArray(body.topicIds)?body.topicIds.slice(0,30):[],entityIds:Array.isArray(body.entityIds)?body.entityIds.slice(0,30):[],sourceRefs:Array.isArray(body.sourceRefs)?body.sourceRefs.slice(0,60):[],derivedFrom:Array.isArray(body.derivedFrom)?body.derivedFrom.slice(0,60):[],eventAt:null,datePrecision:null,revision:1,contentHash,schemaVersion:2,metadata:{claimEvidence:[],origin:'mobile'}};
-      const result=await rpc<any>(env,token,'memory_replica_apply',{p_snapshot:snapshot,p_base_revision:0,p_client_event_id:'mem_evt_'+eventDigest.slice(0,24),p_device_id:null});
-      return ok(result,201);
-    }
-    const claimEvidence=url.pathname.match(/^\/api\/claims\/((?:claim)_[A-Za-z0-9_-]{8,80})\/evidence$/);
+      const title=clean(body.title,300)||claim.slice(0,120),incoming={kind:'claim',node_type:'claim',title,content:claim,project_ref:projectId};
+      const activeClaims=await rest<any[]>(env,token,`memory_nodes${qs({select:'*',node_type:'eq.claim',lifecycle_status:'in.(current,conflicting)',...(projectId?{project_ref:'eq.'+projectId}:{}),order:'updated_at.desc',limit:100})}`).catch(()=>[]);
+      const canonical=chooseCanonicalCandidate(incoming,activeClaims.map(row=>({...row,kind:'claim'})));
+      if(canonical&&(canonical.score>=.97||contentEquivalent(incoming,canonical.row)))return ok({...claimRow(canonical.row),deduplicated:true,canonicalScore:canonical.score});
+      const digest=await sha256Hex(['claim',projectId,claim.toLocaleLowerCase().replace(/\s+/g,' ').trim()].join('\u001f')),nodeId='claim_'+digest.slice(0,20),contentHash=await sha256Hex(claim);
+      const currentRows=await rest<any[]>(env,token,`memory_nodes${qs({select:'*',node_id:'eq.'+nodeId,limit:1})}`).catch(()=>[]),current=currentRows[0]||null;
+      const baseRevision=Math.max(0,Number(current?.revision||0)),revision=baseRevision+1,canonicalKey=canonicalKeyFor(incoming),validFrom=current?.valid_from||new Date().toISOString();
+      const eventDigest=await sha256Hex([nodeId,String(revision),contentHash].join('\u001f'));
+      const snapshot={nodeId,nodeType:'claim',objectType:'claim',objectId:nodeId,referencePath:`ceo://claim/${nodeId}`,title,content:claim,projectId,memoryKind:'semantic',sourceKind:clean(body.sourceKind,40)||'user',truthStatus:clean(body.truthStatus,40)||'reported',evidenceStatus:'unverified',importance:Math.max(0,Math.min(3,Math.round(Number(body.importance??2)))),retentionPolicy:'standard',tier:'hot',topicIds:Array.isArray(body.topicIds)?body.topicIds.slice(0,30):[],entityIds:Array.isArray(body.entityIds)?body.entityIds.slice(0,30):[],sourceRefs:Array.isArray(body.sourceRefs)?body.sourceRefs.slice(0,60):[],derivedFrom:Array.isArray(body.derivedFrom)?body.derivedFrom.slice(0,60):[],eventAt:null,datePrecision:null,revision,contentHash,schemaVersion:3,canonicalKey,lifecycleStatus:'current',validFrom,validTo:null,supersededBy:null,metadata:{...(current?.metadata||{}),claimEvidence:Array.isArray(current?.metadata?.claimEvidence)?current.metadata.claimEvidence:[],origin:'mobile',canonicalKey,lifecycle:'current',validFrom}};
+      const result=await rpc<any>(env,token,'memory_replica_apply',{p_snapshot:snapshot,p_base_revision:baseRevision,p_client_event_id:'mem_evt_'+eventDigest.slice(0,24),p_device_id:null});
+      return ok(result,baseRevision?200:201);
+    }    const claimEvidence=url.pathname.match(/^\/api\/claims\/((?:claim)_[A-Za-z0-9_-]{8,80})\/evidence$/);
     if(claimEvidence&&request.method==='POST'){
       const body=await jsonBody<any>(request),relation=String(body.relation||'').toUpperCase(),sourceRef=clean(body.sourceRef,500);
       if(!['SUPPORTED_BY','CONTRADICTS'].includes(relation)||!sourceRef)throw Object.assign(new Error('CLAIM_EVIDENCE_INVALID'),{status:400});
@@ -484,6 +506,16 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const body = await jsonBody<any>(request);
       const title = clean(body.title, 300); if (!title) throw Object.assign(new Error('TASK_TITLE_REQUIRED'), { status: 400 });
       const payload = { title, description: clean(body.description), status: body.suggested ? 'suggested' : 'open', priority: ['low','normal','high','urgent'].includes(body.priority) ? body.priority : 'normal', due_at: body.dueAt || null, waiting_for: clean(body.waitingFor, 500), tags: tags(body.tags) };
+      const existing=await rest<any[]>(env,token,`tasks${qs({select:'*',status:'neq.cancelled',order:'updated_at.desc',limit:100})}`).catch(()=>[]);
+      const canonical=chooseCanonicalCandidate({...payload,kind:'tasks'},existing.map(row=>({...row,kind:'tasks'})));
+      if(canonical&&canonical.score>=.78){
+        const row=canonical.row,richer=payload.description.length>clean(row.description,5000).length+10||Boolean(payload.due_at&&!row.due_at);
+        if(richer){
+          const patched=await rest<TaskRecord[]>(env,token,`tasks${qs({select:'*',id:`eq.${row.id}`})}`,{method:'PATCH',body:{description:payload.description||row.description,due_at:payload.due_at||row.due_at,waiting_for:payload.waiting_for||row.waiting_for,priority:payload.priority,tags:[...new Set([...(row.tags||[]),...payload.tags])]},prefer:'return=representation'}).catch(()=>[]);
+          return ok({...((patched[0]||row) as any),deduplicated:true,canonicalScore:canonical.score});
+        }
+        return ok({...row,deduplicated:true,canonicalScore:canonical.score});
+      }
       const rows = await rest<TaskRecord[]>(env, token, `tasks?select=*`, { method: 'POST', body: payload, prefer: 'return=representation' });
       return ok(rows[0] || null, 201);
     }
@@ -503,10 +535,20 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const body = await jsonBody<any>(request), title = clean(body.title, 300), startAt = clean(body.startAt, 100);
       if (!title || !startAt || Number.isNaN(Date.parse(startAt))) throw Object.assign(new Error('EVENT_TITLE_AND_START_REQUIRED'), { status: 400 });
       const payload = { title, description: clean(body.description), event_type: ['meeting','appointment','deadline','reminder','activity','other'].includes(body.eventType) ? body.eventType : 'meeting', start_at: new Date(startAt).toISOString(), end_at: body.endAt ? new Date(body.endAt).toISOString() : null, timezone: clean(body.timezone, 80) || 'Asia/Bangkok', location: clean(body.location, 500), status: 'planned', priority: ['low','normal','high','urgent'].includes(body.priority) ? body.priority : 'normal', tags: tags(body.tags) };
+      const startMs=Date.parse(payload.start_at),from=new Date(startMs-12*3600000).toISOString(),to=new Date(startMs+36*3600000).toISOString();
+      const existing=(await rest<any[]>(env,token,`events${qs({select:'*',status:'neq.cancelled',start_at:`gte.${from}`,order:'start_at.asc',limit:100})}`).catch(()=>[])).filter(row=>Date.parse(String(row.start_at||''))<=Date.parse(to));
+      const canonical=chooseCanonicalCandidate({...payload,kind:'events'},existing.map(row=>({...row,kind:'events'})));
+      if(canonical&&canonical.score>=.76){
+        const row=canonical.row,richer=payload.description.length>clean(row.description,5000).length+10||Boolean(payload.location&&!row.location)||Boolean(payload.end_at&&!row.end_at);
+        if(richer){
+          const patched=await rest<EventRecord[]>(env,token,`events${qs({select:'*',id:`eq.${row.id}`})}`,{method:'PATCH',body:{description:payload.description||row.description,location:payload.location||row.location,end_at:payload.end_at||row.end_at,event_type:payload.event_type||row.event_type,priority:payload.priority,tags:[...new Set([...(row.tags||[]),...payload.tags])]},prefer:'return=representation'}).catch(()=>[]);
+          return ok({...((patched[0]||row) as any),deduplicated:true,canonicalScore:canonical.score});
+        }
+        return ok({...row,deduplicated:true,canonicalScore:canonical.score});
+      }
       const rows = await rest<EventRecord[]>(env, token, 'events?select=*', { method: 'POST', body: payload, prefer: 'return=representation' });
       return ok(rows[0] || null, 201);
     }
-
     if (url.pathname === '/api/search' && request.method === 'GET') return ok(await searchKnowledge(env, token, clean(url.searchParams.get('q'), 240), safeLimit(url.searchParams.get('limit'), 10, 30)));
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
@@ -635,8 +677,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const answerField=contextResolution.answerField!=='general'?contextResolution.answerField:currentField;
       const search = await searchKnowledge(env, token, resolvedQuery, 8, answerField, preferredSourceId);
       if(originalV2.eventConstraint!=='none'){const constrained=search.results.filter((row:any)=>eventConstraintMatches(originalV2.eventConstraint,row));if(constrained.length){search.results=constrained;search.count=constrained.length;}}
-      const memoryRerank=await rerankMemoryCandidates(env,resolvedQuery,search.results,{provider:routeProvider,model:backgroundModel||routeModel,activeSourceId:preferredSourceId});
-      const qualityRejected=memoryRerank.quality.decision==='reject'&&(answerField!=='general'||recallAction(message)!=='none');
+      const rerankQuery=(bareField||contextResolution.dependsOnPriorContext)?`${resolvedQuery} ${message}`:message;
+      const memoryRerank=await rerankMemoryCandidates(env,rerankQuery,search.results,{provider:routeProvider,model:backgroundModel||routeModel,activeSourceId:preferredSourceId});
+      const bareStructuredFallback=bareField&&search.results.some((row:any)=>['events','tasks'].includes(String(row?.kind||'')));
+      const qualityRejected=memoryRerank.quality.decision==='reject'&&!bareStructuredFallback&&(answerField!=='general'||recallAction(message)!=='none');
       search.results=qualityRejected?[]:memoryRerank.rows;search.count=search.results.length;
       const compositionMessage=answerField!==currentField&&contextResolution.usedAI?resolvedQuery:message;
       const directAnswer=composeRecallAnswer(compositionMessage,search.results);

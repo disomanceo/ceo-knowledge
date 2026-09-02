@@ -1,6 +1,7 @@
 import { askCloudAi } from './cloud-ai';
 import { recallAction, recallActionMatches, type RecallAction } from './chat';
-import { memoryQualityGate, scoreMemoryCandidates, type CandidateScore, type QualityGate } from './candidate-scorer';
+import { memoryQualityGate, type CandidateScore, type QualityGate } from './candidate-scorer';
+import { hybridRankCandidates } from './hybrid-retrieval';
 import { recordRetrieval } from './retrieval-telemetry';
 import type { Env } from './supabase';
 
@@ -17,7 +18,7 @@ export function deterministicMemoryRerank(query:string,rows:any[],activeSourceId
     const matched=source.filter(row=>recallActionMatches(action,row));
     if(matched.length)filtered=matched;
   }
-  const scores=scoreMemoryCandidates(query,filtered,activeSourceId),quality=memoryQualityGate(scores),ordered=scores.map(x=>x.row);
+  const hybrid=hybridRankCandidates(query,filtered,activeSourceId),scores=hybrid as CandidateScore[],quality=memoryQualityGate(scores),ordered=hybrid.map(x=>x.row);
   const selectedId=quality.decision==='accept'?scores[0]?.id||'':'';
   const mode=quality.decision==='accept'?'quality-gate':quality.decision==='reject'?'reject':action!=='none'?'action-filter':'score';
   return{rows:ordered,action,mode,selectedId,aiUsed:false,reason:quality.reason,quality,scores};

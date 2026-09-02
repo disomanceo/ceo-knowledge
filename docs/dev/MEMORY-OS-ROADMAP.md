@@ -447,6 +447,22 @@ M1-M4 were completed and production-certified on 2026-09-01.
 
 Detailed certification: docs/dev/MEMORY-M4-CERTIFICATION.md
 
+# Memory Metabolism V3.1–V3.4 — ✅ COMPLETE / PRODUCTION
+
+Released 2026-09-02 as an additive evolution of Memory OS V2:
+- Search-before-create across Auto Memory and Mobile/API Memory, Event, Task and Claim writes.
+- Canonical keys plus current/superseded/conflicting/stale/refuted lifecycle and validity windows.
+- Revision-safe replica rewrites using the actual current base revision.
+- Explicit supersession without destructive replacement.
+- Hybrid structured + Thai fuzzy lexical + semantic + retrieval-prior RRF ranking.
+- Active-source authority and structured follow-up protection against false absence.
+- Retrieval evaluation endpoint/history with Recall@1/3/10, MRR and False Absence Rate.
+- Golden secretary retrieval corpus: 55 queries; Recall@3 1.00, Recall@10 1.00, False Absence 0.
+- Mobile Memory lifecycle/provenance display plus History filter.
+- Supabase migration `20260902123000_ceo_knowledge_memory_metabolism_v31.sql` deployed and local/remote aligned.
+- Full ceo-knowledge verification: Gateway 181/181, Shared 9/9, Mobile 12/12; typecheck/build/Worker dry-run PASS.
+
+Detailed design/release notes: `docs/dev/MEMORY-METABOLISM-V31.md`
 # Deferred Until Core Is Stable
 
 Defer until M1–M3 are stable:

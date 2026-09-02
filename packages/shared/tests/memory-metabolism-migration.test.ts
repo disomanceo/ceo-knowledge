@@ -1,0 +1,4 @@
+import { describe,expect,it } from 'vitest';
+import { readFile } from 'node:fs/promises';
+
+describe('memory metabolism migration',()=>{it('is additive and includes lifecycle, supersession, replica bridge and eval storage',async()=>{const sql=await readFile(new URL('../../../supabase/migrations/20260902123000_ceo_knowledge_memory_metabolism_v31.sql',import.meta.url),'utf8');expect(sql).toContain('lifecycle_status');expect(sql).toContain('canonical_key');expect(sql).toContain('superseded_by');expect(sql).toContain('memory_supersede');expect(sql).toContain('retrieval_evaluations');expect(sql).toContain('memory_metabolism_before_write');expect(sql).toContain('canonicalKey');expect(sql).toContain('lifecycleStatus');expect(sql).toContain('drop policy if exists ceo_retrieval_eval_owner_select');expect(sql).not.toMatch(/drop\s+table|truncate/i)})});

@@ -1,6 +1,7 @@
 import { sha256Hex } from './security';
 import { rest, rpc, type Env } from './supabase';
 import { isLiveExternalQuery, isQuestionLike, scheduleTextSimilarity } from './chat-intelligence';
+import { canonicalKeyFor, chooseCanonicalCandidate, contentEquivalent } from './memory-metabolism';
 
 export type AutoMemoryKind = 'memory' | 'event' | 'task' | 'contact' | 'project_knowledge' | 'ignore';
 export type AutoMemoryRetention = 'permanent' | 'consolidation' | 'daily_log' | 'none';
@@ -434,60 +435,19 @@ function query(values: Record<string, string>): string {
 }
 
 async function persistReplicaNode(env: Env, token: string, input: {
-  prefix: 'mem'|'evt'|'task'|'person'|'project'|'conv';
-  nodeType: 'memory'|'event'|'task'|'person'|'project'|'conversation';
-  objectType: string;
-  objectId: string;
-  title: string;
-  content: string;
-  projectRef?: string;
-  memoryKind?: 'episodic'|'semantic'|'procedural'|'prospective'|'derived'|'summary'|null;
-  sourceKind?: 'user'|'conversation'|'document'|'external_api'|'web'|'device'|'ai_derived'|'system';
-  importance?: number;
-  retentionPolicy?: 'standard'|'permanent'|'temporary';
-  tier?: 'hot'|'warm'|'cold'|'pinned';
-  topicIds?: string[];
-  entityIds?: string[];
-  sourceRefs?: string[];
-  derivedFrom?: string[];
-  eventAt?: string|null;
-  metadata?: Record<string, unknown>;
+  prefix: 'mem'|'evt'|'task'|'person'|'project'|'conv'; nodeType: 'memory'|'event'|'task'|'person'|'project'|'conversation'; objectType: string; objectId: string; title: string; content: string;
+  projectRef?: string; memoryKind?: 'episodic'|'semantic'|'procedural'|'prospective'|'derived'|'summary'|null; sourceKind?: 'user'|'conversation'|'document'|'external_api'|'web'|'device'|'ai_derived'|'system';
+  importance?: number; retentionPolicy?: 'standard'|'permanent'|'temporary'; tier?: 'hot'|'warm'|'cold'|'pinned'; topicIds?: string[]; entityIds?: string[]; sourceRefs?: string[]; derivedFrom?: string[]; eventAt?: string|null; metadata?: Record<string, unknown>;
 }) {
-  const digest = await sha256Hex([input.prefix,input.objectType,input.objectId].join('\u001f'));
-  const nodeId = `${input.prefix}_${digest.slice(0,20)}`;
-  const contentHash = await sha256Hex(input.content);
-  const eventDigest = await sha256Hex([nodeId,'1',contentHash].join('\u001f'));
-  const snapshot = {
-    nodeId,
-    nodeType: input.nodeType,
-    objectType: input.objectType,
-    objectId: input.objectId,
-    referencePath: `ceo://${input.nodeType}/${input.objectId}`,
-    title: input.title,
-    content: input.content,
-    projectId: clean(input.projectRef,160),
-    memoryKind: input.memoryKind || null,
-    sourceKind: input.sourceKind || 'conversation',
-    truthStatus: 'reported',
-    evidenceStatus: 'single_source',
-    importance: Math.max(0,Math.min(3,Math.round(Number(input.importance ?? 2)))),
-    retentionPolicy: input.retentionPolicy || 'standard',
-    tier: input.tier || 'hot',
-    topicIds: uniq(input.topicIds,30,120),
-    entityIds: uniq(input.entityIds,30,120),
-    sourceRefs: uniq(input.sourceRefs,60,500),
-    derivedFrom: uniq(input.derivedFrom,60,500),
-    eventAt: input.eventAt || null,
-    datePrecision: input.eventAt ? 'minute' : null,
-    revision: 1,
-    contentHash,
-    schemaVersion: 2,
-    metadata: input.metadata || {},
-  };
-  const replica = await rpc<any>(env, token, 'memory_replica_apply', { p_snapshot:snapshot, p_base_revision:0, p_client_event_id:`mem_evt_${eventDigest.slice(0,24)}`, p_device_id:null });
-  return { nodeId, replica };
+  const digest=await sha256Hex([input.prefix,input.objectType,input.objectId].join('\u001f')),nodeId=`${input.prefix}_${digest.slice(0,20)}`,contentHash=await sha256Hex(input.content);
+  const existing=await rest<any[]>(env,token,`memory_nodes${query({select:'node_id,revision,content_hash,metadata,lifecycle_status,valid_from,valid_to,superseded_by',node_id:`eq.${nodeId}`,limit:'1'})}`).catch(()=>[]);
+  const current=existing[0]||null,baseRevision=Math.max(0,Number(current?.revision||0)),revision=baseRevision+1,canonicalKey=canonicalKeyFor({kind:input.nodeType,title:input.title,content:input.content,event_at:input.eventAt});
+  const validFrom=current?.valid_from||new Date().toISOString(),metadata={...(input.metadata||{}),canonicalKey,lifecycle:'current',validFrom};
+  const eventDigest=await sha256Hex([nodeId,String(revision),contentHash].join('\u001f'));
+  const snapshot={nodeId,nodeType:input.nodeType,objectType:input.objectType,objectId:input.objectId,referencePath:`ceo://${input.nodeType}/${input.objectId}`,title:input.title,content:input.content,projectId:clean(input.projectRef,160),memoryKind:input.memoryKind||null,sourceKind:input.sourceKind||'conversation',truthStatus:'reported',evidenceStatus:'single_source',importance:Math.max(0,Math.min(3,Math.round(Number(input.importance??2)))),retentionPolicy:input.retentionPolicy||'standard',tier:input.tier||'hot',topicIds:uniq(input.topicIds,30,120),entityIds:uniq(input.entityIds,30,120),sourceRefs:uniq(input.sourceRefs,60,500),derivedFrom:uniq(input.derivedFrom,60,500),eventAt:input.eventAt||null,datePrecision:input.eventAt?'minute':null,revision,contentHash,schemaVersion:3,canonicalKey,lifecycleStatus:'current',validFrom,validTo:null,supersededBy:null,metadata};
+  const replica=await rpc<any>(env,token,'memory_replica_apply',{p_snapshot:snapshot,p_base_revision:baseRevision,p_client_event_id:`mem_evt_${eventDigest.slice(0,24)}`,p_device_id:null});
+  return{nodeId,replica,noChange:replica?.outcome==='no_change'};
 }
-
 async function archiveConversation(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, fingerprint: string, source: string, conversationKey: string) {
   const existing = await rest<any[]>(env, token, `conversation_summaries${query({ select: 'id,summary,metadata,decisions,open_loops,facts', conversation_key: `eq.${conversationKey}`, limit: '1' })}`).catch(() => []);
   if (existing[0]?.metadata?.lastCaptureFingerprint === fingerprint) return { record: existing[0], duplicate: true };
@@ -531,11 +491,21 @@ async function findDomainCapture(env: Env, token: string, table: 'events' | 'tas
 }
 
 async function findSimilarEvent(env:Env,token:string,decision:AutoMemoryDecision){
-  if(!decision.eventAt)return null;const p=bangkokDateParts(new Date(decision.eventAt)),from=bangkokIso(p.year,p.month,p.day,0,0);if(!from)return null;const to=new Date(Date.parse(from)+86400000-1).toISOString();
-  const q=new URLSearchParams();q.set('select','*');q.set('start_at',`gte.${from}`);q.set('order','start_at.asc');q.set('limit','50');
-  const rows=await rest<any[]>(env,token,`events?${q.toString()}`).catch(()=>[]);
+  if(!decision.eventAt)return null;
+  const p=bangkokDateParts(new Date(decision.eventAt)),from=bangkokIso(p.year,p.month,p.day,0,0);if(!from)return null;
+  const to=new Date(Date.parse(from)+86400000-1).toISOString(),q=new URLSearchParams();q.set('select','*');q.set('start_at',`gte.${from}`);q.set('order','start_at.asc');q.set('limit','50');
+  const rows=(await rest<any[]>(env,token,`events?${q.toString()}`).catch(()=>[])).filter(row=>row?.status!=='cancelled'&&Date.parse(String(row?.start_at||''))<=Date.parse(to));
+  const canonical=chooseCanonicalCandidate({kind:'events',title:decision.title,description:decision.content,start_at:decision.eventAt},rows.map(row=>({...row,kind:'events'})));
+  if(canonical&&canonical.score>=.72)return canonical.row;
   const source=`${decision.title} ${decision.content}`;
-  return rows.filter(row=>row?.status!=='cancelled'&&Date.parse(String(row?.start_at||''))<=Date.parse(to)).map(row=>({row,similarity:Math.max(scheduleTextSimilarity(source,`${row?.title||''} ${row?.description||''}`),scheduleTextSimilarity(decision.title,row?.title))})).sort((a,b)=>b.similarity-a.similarity).find(item=>item.similarity>=.72)?.row||null;
+  return rows.map(row=>({row,similarity:Math.max(scheduleTextSimilarity(source,`${row?.title||''} ${row?.description||''}`),scheduleTextSimilarity(decision.title,row?.title))})).sort((a,b)=>b.similarity-a.similarity).find(item=>item.similarity>=.72)?.row||null;
+}
+async function findSimilarTask(env:Env,token:string,decision:AutoMemoryDecision){
+  const q=new URLSearchParams();q.set('select','*');q.set('status','neq.cancelled');q.set('order','updated_at.desc');q.set('limit','80');
+  const rows=await rest<any[]>(env,token,`tasks?${q.toString()}`).catch(()=>[]);
+  const incoming={kind:'tasks',title:decision.title,description:decision.content,due_at:decision.dueAt};
+  const candidate=chooseCanonicalCandidate(incoming,rows.map(row=>({...row,kind:'tasks'})));
+  return candidate&&candidate.score>=.76?candidate:null;
 }
 
 async function findAuthoritativeEventCollision(env:Env,token:string,decision:AutoMemoryDecision){
@@ -561,25 +531,21 @@ function extractEventLocation(text:string):string {
 }
 
 async function persistMemory(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string) {
-  const projectRef = clean(input.projectId, 160), projectId = projectUuid(input.projectId);
-  const fingerprint = await sha256Hex(['auto-memory', decision.memoryType, projectRef, normalize(decision.content)].join('\u001f'));
-  const metadata = domainMetadata(input, decision, source, conversationKey, captureFingerprint);
-  const body: any = { title: decision.title, content: decision.content, memory_type: decision.memoryType, importance: decision.importance, scope: projectRef ? 'project' : 'global', confidence: decision.confidence, status: 'active', tags: ['auto-memory', source, ...(decision.explicit ? ['pinned'] : [])], fingerprint, metadata };
-  if (projectId) body.project_id = projectId;
-  const rows = await rest<any[]>(env, token, `memories${query({ select: '*', on_conflict: 'user_id,fingerprint' })}`, { method: 'POST', body, prefer: 'resolution=merge-duplicates,return=representation' });
-  const memory = rows[0] || null;
-  if (!memory) return null;
-  const nodeDigest = await sha256Hex(`auto-memory-node\u001f${fingerprint}`), nodeId = `mem_${nodeDigest.slice(0, 20)}`, contentHash = await sha256Hex(decision.content);
-  const eventDigest = await sha256Hex([nodeId, '1', contentHash].join('\u001f'));
-  const snapshot = {
-    nodeId, nodeType: 'memory', referencePath: `ceo://memory/${nodeId}`, title: decision.title, content: decision.content, projectId: projectRef,
-    memoryKind: decision.memoryType === 'rule' ? 'procedural' : decision.eventAt ? 'prospective' : 'semantic', sourceKind: 'conversation', truthStatus: 'reported', evidenceStatus: 'single_source',
-    importance: decision.importance, retentionPolicy: decision.explicit ? 'permanent' : decision.retention === 'daily_log' ? 'temporary' : 'standard', tier: decision.explicit ? 'pinned' : decision.retention === 'consolidation' ? 'warm' : 'hot', topicIds: uniq(input.topics, 30, 120), entityIds: [], sourceRefs: [memory.id, clean(input.sourceRef, 500)].filter(Boolean), derivedFrom: [], eventAt: decision.eventAt, datePrecision: decision.eventAt ? 'minute' : null, revision: 1, contentHash, schemaVersion: 2, metadata,
-  };
-  const replica = await rpc<any>(env, token, 'memory_replica_apply', { p_snapshot: snapshot, p_base_revision: 0, p_client_event_id: `mem_evt_${eventDigest.slice(0, 24)}`, p_device_id: null });
-  return { kind: 'memory', id: memory.id, nodeId, record: memory, replica };
+  const projectRef=clean(input.projectId,160),projectId=projectUuid(input.projectId),metadata=domainMetadata(input,decision,source,conversationKey,captureFingerprint);
+  const incoming={kind:'memory_nodes',title:decision.title,content:decision.content,memory_kind:decision.memoryType,project_ref:projectRef,event_at:decision.eventAt};
+  const candidates=await rest<any[]>(env,token,`memory_nodes${query({select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,reference_path,tier,retention_policy,source_kind,lifecycle_status,valid_from,valid_to,superseded_by,metadata,created_at,updated_at',node_type:'eq.memory',lifecycle_status:'in.(current,conflicting)',order:'updated_at.desc',limit:'100'})}`).catch(()=>[]);
+  const canonical=chooseCanonicalCandidate(incoming,candidates.map(row=>({...row,kind:'memory_nodes'})));
+  if(canonical&&(canonical.score>=.97||contentEquivalent(incoming,canonical.row))){
+    return{kind:'memory',id:String(canonical.row?.source_refs?.[0]||canonical.row.node_id),nodeId:canonical.row.node_id,record:canonical.row,replica:null,duplicate:true,semanticDuplicate:true,canonicalScore:canonical.score};
+  }
+  const fingerprint=await sha256Hex(['auto-memory',decision.memoryType,projectRef,normalize(decision.content)].join('\u001f'));
+  const body:any={title:decision.title,content:decision.content,memory_type:decision.memoryType,importance:decision.importance,scope:projectRef?'project':'global',confidence:decision.confidence,status:'active',tags:['auto-memory',source,...(decision.explicit?['pinned']:[])],fingerprint,metadata};
+  if(projectId)body.project_id=projectId;
+  const rows=await rest<any[]>(env,token,`memories${query({select:'*',on_conflict:'user_id,fingerprint'})}`,{method:'POST',body,prefer:'resolution=merge-duplicates,return=representation'}),memory=rows[0]||null;
+  if(!memory)return null;
+  const mirror=await persistReplicaNode(env,token,{prefix:'mem',nodeType:'memory',objectType:'memory',objectId:memory.id,title:memory.title||decision.title,content:memory.content||decision.content,projectRef,memoryKind:decision.memoryType==='rule'?'procedural':decision.eventAt?'prospective':'semantic',sourceKind:'conversation',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':decision.retention==='daily_log'?'temporary':'standard',tier:decision.explicit?'pinned':decision.retention==='consolidation'?'warm':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[memory.id,clean(input.sourceRef,500)].filter(Boolean),eventAt:decision.eventAt,metadata});
+  return{kind:'memory',id:memory.id,nodeId:mirror.nodeId,record:memory,replica:mirror.replica};
 }
-
 async function persistEvent(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string, checkDuplicate: boolean) {
   if (!decision.eventAt) return null;
   if (checkDuplicate) {
@@ -589,7 +555,9 @@ async function persistEvent(env: Env, token: string, input: AutoMemoryInput, dec
       return { kind: 'event', id: existing[0].id, nodeId:mirror.nodeId, record: existing[0], replica:mirror.replica, duplicate: true };
     }
   }
-  const similar=await findSimilarEvent(env,token,decision);
+  const contextualSourceId=clean(input.sourceRef,200);
+  const contextualRows=contextualSourceId?await rest<any[]>(env,token,`events${query({select:'*',id:`eq.${contextualSourceId}`,limit:'1'})}`).catch(()=>[]):[];
+  const similar=contextualRows[0]||await findSimilarEvent(env,token,decision);
   if(similar){
     let record=similar;
     const newLocation=extractEventLocation(decision.content),existingLocation=clean(similar.location,300),contextualUpdate=clean(input.sourceRef,200)===String(similar.id||''),richer=(decision.explicit||contextualUpdate)&&(decision.content.length>clean(similar.description,4000).length+12||Boolean(newLocation&&!existingLocation));
@@ -611,6 +579,14 @@ async function persistTask(env: Env, token: string, input: AutoMemoryInput, deci
       const mirror=await persistReplicaNode(env,token,{prefix:'task',nodeType:'task',objectType:'task',objectId:existing[0].id,title:existing[0].title||decision.title,content:existing[0].description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[existing[0].id,clean(input.sourceRef,500)].filter(Boolean),eventAt:existing[0].due_at||decision.dueAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});
       return { kind: 'task', id: existing[0].id, nodeId:mirror.nodeId, record: existing[0], replica:mirror.replica, duplicate: true };
     }
+  }
+  const similar=await findSimilarTask(env,token,decision);
+  if(similar){
+    const row=similar.row,canonicalSame=contentEquivalent({kind:'tasks',title:decision.title,description:decision.content,due_at:decision.dueAt},{...row,kind:'tasks'}),richer=decision.explicit&&(decision.content.length>clean(row.description,4000).length+10||Boolean(decision.dueAt&&!row.due_at));
+    let record=row;
+    if(!canonicalSame&&richer){const patched=await rest<any[]>(env,token,`tasks${query({select:'*',id:`eq.${row.id}`})}`,{method:'PATCH',body:{description:decision.content,due_at:decision.dueAt||row.due_at,priority:'high',metadata:{...(row.metadata||{}),...domainMetadata(input,decision,source,conversationKey,captureFingerprint),canonicalMerged:true}},prefer:'return=representation'}).catch(()=>[]);record=patched[0]||row;}
+    const mirror=await persistReplicaNode(env,token,{prefix:'task',nodeType:'task',objectType:'task',objectId:record.id,title:record.title||decision.title,content:record.description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[record.id,clean(input.sourceRef,500)].filter(Boolean),eventAt:record.due_at||decision.dueAt,metadata:{...domainMetadata(input,decision,source,conversationKey,captureFingerprint),canonicalMatchScore:similar.score}});
+    return{kind:'task',id:record.id,nodeId:mirror.nodeId,record,replica:mirror.replica,duplicate:true,semanticDuplicate:true,merged:!canonicalSame&&richer};
   }
   const body: any = { title: decision.title, description: decision.content, status: 'open', priority: decision.importance >= 3 ? 'high' : 'normal', due_at: decision.dueAt, waiting_for: '', tags: ['auto-memory', source], metadata: domainMetadata(input, decision, source, conversationKey, captureFingerprint) };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
