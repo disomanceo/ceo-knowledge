@@ -1,6 +1,7 @@
 import { recallAnswerField, recallSubjectQuery, type RecallAnswerField } from './chat';
 import { detectChatIntent, isQuestionLike } from './chat-intelligence';
 import { resolveCloudContext, type CloudContextResolution } from './cloud-ai';
+import { weightedContextSupport } from './conversation-state-v3';
 import type { Env } from './supabase';
 
 const clean=(value:unknown,max=4000)=>String(value??'').replace(/\u0000/g,'').trim().slice(0,max);
@@ -98,18 +99,9 @@ function safeCloudResolution(base:ContextResolution,cloud:CloudContextResolution
   };
 }
 
-const ANCHOR_STOP=new Set(['วันไหน','วันที่','ที่ไหน','กี่โมง','อะไร','อะไรบ้าง','ใคร','ครับ','ค่ะ','คะ','นะ','ล่ะ','ละ','แล้ว','ด้วย','เรื่อง','อันนั้น','เรื่องนั้น']);
-function anchorTokens(value:string):string[]{
-  return [...new Set(clean(value,3000).toLocaleLowerCase()
-    .replace(/(ประเมิน|นิเทศ|โรงเรียน|วัด|ครู|ผอ\.?|งาน|เลี้ยง|เกษียณ|ประชุม|อบรม|รับทุน|ส่งเล่ม|วันที่|วันไหน|ที่ไหน|กี่โมง)/gu,' $1 ')
-    .replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').split(/\s+/).filter(token=>token.length>=2&&!ANCHOR_STOP.has(token)))];
-}
 function contextAnchorSupport(message:string,state:ConversationState,resolution:ContextResolution):number{
   const source=clean([message,...state.recentTurns.flatMap(turn=>[turn.text,turn.query||''])].join(' '),12_000).toLocaleLowerCase();
-  const tokens=anchorTokens(resolution.subject||resolution.resolvedQuery);
-  if(!tokens.length)return 1;
-  const supported=tokens.filter(token=>source.includes(token)).length;
-  return supported/tokens.length;
+  return weightedContextSupport(resolution.subject||resolution.resolvedQuery,source);
 }
 
 export async function resolveConversationContext(env:Env,message:string,recentContext:RecentContextTurn[],options:{model?:string}={}):Promise<ContextResolution>{

@@ -11,6 +11,9 @@ import { analyzeIntelligenceV2, eventConstraintMatches } from './intelligence-v2
 import { researchTelemetry, researchWeb } from './web-research';
 import { composeResearchAnswer } from './answer-intelligence';
 import { rerankMemoryCandidates } from './memory-reranker';
+import { deriveConversationStateV3 } from './conversation-state-v3';
+import { applyActiveEventRelation } from './memory-relations';
+import { recordCorrection, retrievalTelemetry } from './retrieval-telemetry';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
@@ -334,7 +337,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'I1-I8', research:researchTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'deterministic-first-ai-on-ambiguity', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -353,7 +356,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
-    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'I1-I8',research:researchTelemetry(),routing:'direct-web-runtime-cloud',speech:'structured-display-spoken-chunks'});
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+quality-gate+constrained-ai-judge',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -515,6 +518,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const routeModel=routerMode==='model'?clean(body.router?.model,120):'';
       const backgroundModel=routerMode==='auto'?'':clean(body.router?.backgroundModel,120);
       const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000),sourceId:clean(item?.sourceId,200),query:clean(item?.query,1000)})).filter(item=>item.text);
+      const stateV3=deriveConversationStateV3(message,recentContext);
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
       const previousSource=[...recentContext].reverse().find(item=>item.role==='ceo'&&item.sourceId);
       const saveStatusQuestion=/(?:บันทึก|จำ)(?:ไว้|ให้)?(?:แล้ว)?\s*(?:ไหม|หรือยัง|ไว้ยัง|หรือเปล่า|ป่าว|ยัง)\s*$/i.test(message);
@@ -525,11 +529,19 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const legacyContextualQuery=listContextQuery||(bareField&&previousUser?previousUser.text:message);
       const contextResolution=await resolveConversationContext(env,message,recentContext,{model:backgroundModel});
       const resolvedQuery=listContextQuery||(contextResolution.confidence>=0.6?contextResolution.resolvedQuery:legacyContextualQuery);
-      const preferredSourceId=(bareField||contextResolution.dependsOnPriorContext)?clean(previousSource?.sourceId,200):'';
+      const stateUsesSource=['FIELD_FOLLOW_UP','FOLLOW_UP','UPDATE','CORRECTION','CONFIRMATION'].includes(stateV3.mode);
+      const preferredSourceId=(bareField||contextResolution.dependsOnPriorContext||stateUsesSource)?clean(stateV3.activeSourceId||previousSource?.sourceId,200):'';
       const contextMeta=contextResolutionPublic(contextResolution);
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
       const originalV2=analyzeIntelligenceV2(message), intelligenceV2=analyzeIntelligenceV2(resolvedQuery);
       const intent = detectChatIntent(resolvedQuery);
+      if(preferredSourceId&&['UPDATE','CORRECTION'].includes(stateV3.mode)){
+        const earlyRelation=await applyActiveEventRelation(env,token,preferredSourceId,message);
+        if(earlyRelation.applied){
+          if(stateV3.mode==='CORRECTION')recordCorrection({conversationId:clean(body.conversationId,200),sourceId:preferredSourceId,message,previousQuery:stateV3.activeQuery});
+          return ok({intent:'memory-update',answer:stateV3.mode==='CORRECTION'?'แก้ไขข้อมูลในกิจกรรมเดิมให้แล้วครับ':'เพิ่มข้อมูลในกิจกรรมเดิมให้แล้วครับ',mode:'knowledge',provider:'knowledge',ai:false,relation:earlyRelation,autoMemory:null,stateV3,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:stateV3.activeQuery||resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        }
+      }
       if(contextResolution.clarificationRequired){
         return ok({intent:'clarification',answer:'ขอระบุอีกนิดครับว่าหมายถึงเรื่องไหน เพื่อไม่ให้ผมเดาผิดบริบท',mode:'clarification',provider:'knowledge',ai:true,aiConfigured:cloudAiConfig(env).configured,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
       }
@@ -550,6 +562,13 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       const question = isContextualQuestion(message,contextResolution);
       let autoMemory: any = null;
+      if(!question&&preferredSourceId&&['UPDATE','CORRECTION'].includes(stateV3.mode)){
+        const relation=await applyActiveEventRelation(env,token,preferredSourceId,message);
+        if(relation.applied){
+          if(stateV3.mode==='CORRECTION')recordCorrection({conversationId:clean(body.conversationId,200),sourceId:preferredSourceId,message,previousQuery:stateV3.activeQuery});
+          return ok({intent:'memory-update',answer:stateV3.mode==='CORRECTION'?'แก้ไขข้อมูลในกิจกรรมเดิมให้แล้วครับ':'เพิ่มข้อมูลในกิจกรรมเดิมให้แล้วครับ',mode:'knowledge',provider:'knowledge',ai:false,relation,autoMemory:null,stateV3,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:stateV3.activeQuery||resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        }
+      }
       if (!question) {
         if(memoryTurn.followUp&&!memoryTurn.message)return ok({intent:'remember',answer:'ยังไม่มีข้อความก่อนหน้าที่ชัดเจนให้บันทึกครับ',memory:null,autoMemory:null,mode:'knowledge',provider:'knowledge'});
         try {
@@ -616,8 +635,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const answerField=contextResolution.answerField!=='general'?contextResolution.answerField:currentField;
       const search = await searchKnowledge(env, token, resolvedQuery, 8, answerField, preferredSourceId);
       if(originalV2.eventConstraint!=='none'){const constrained=search.results.filter((row:any)=>eventConstraintMatches(originalV2.eventConstraint,row));if(constrained.length){search.results=constrained;search.count=constrained.length;}}
-      const memoryRerank=await rerankMemoryCandidates(env,message,search.results,{provider:routeProvider,model:backgroundModel||routeModel});
-      search.results=memoryRerank.rows;search.count=memoryRerank.rows.length;
+      const memoryRerank=await rerankMemoryCandidates(env,resolvedQuery,search.results,{provider:routeProvider,model:backgroundModel||routeModel,activeSourceId:preferredSourceId});
+      const qualityRejected=memoryRerank.quality.decision==='reject'&&(answerField!=='general'||recallAction(message)!=='none');
+      search.results=qualityRejected?[]:memoryRerank.rows;search.count=search.results.length;
       const compositionMessage=answerField!==currentField&&contextResolution.usedAI?resolvedQuery:message;
       const directAnswer=composeRecallAnswer(compositionMessage,search.results);
       const fallbackAnswer = directAnswer.answer || cloudChatFallback(compositionMessage, search.results);
