@@ -114,7 +114,7 @@ export function resolveMemoryCaptureTurn(message:string,recentContext:MemoryCont
   const text=clean(message,12_000);
   const correction=text.match(/^\s*(?:ไม่ใช่|ขอแก้(?:เป็น)?|แก้เป็น|หมายถึง)\s*[,;:：-]?\s*(?:ให้)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้)?\s*(?:ว่า)?\s+(.+)$/i);
   if(correction?.[1]){const sourceText=clean(correction[1],12_000);return{message:`บันทึกไว้ว่า ${sourceText}`,followUp:false,correction:true,sourceText};}
-  const bare=/^\s*(?:(?:ช่วย|ให้)?\s*)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้|อันนี้|เรื่องนี้)?(?:ให้หน่อย|ด้วย)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(text);
+  const bare=/^\s*(?:(?:ช่วย|ให้)?\s*)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้|อันนี้|เรื่องนี้)?(?:ให้หน่อย|ให้ด้วย|ด้วย)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(text);
   if(bare){
     const previous=[...recentContext].reverse().find(item=>{const value=clean(item?.text,12_000);return String(item?.role||'').toLowerCase()==='user'&&value&&!isQuestionLike(value)&&!/^\s*(?:(?:ช่วย|ให้)?\s*)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้|อันนี้|เรื่องนี้)?(?:ให้หน่อย|ด้วย)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(value);});
     const sourceText=clean(previous?.text,12_000);
@@ -122,6 +122,11 @@ export function resolveMemoryCaptureTurn(message:string,recentContext:MemoryCont
     return{message:'',followUp:true,correction:false,sourceText:''};
   }
   return{message:text,followUp:false,correction:false,sourceText:text};
+}
+
+export function isMemorySaveStatusQuestion(message:string):boolean {
+  const text=clean(message,1000);
+  return /^(?:ได้\s*)?(?:บันทึก|จำ|จด|เก็บ)(?:ไว้|ให้)?(?:แล้ว)?(?:หรือยัง|รึยัง|ยัง|ไหม|มั้ย|หรือเปล่า)\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*[?？]?$/i.test(text);
 }
 
 export function containsAutoMemorySecret(text: string): boolean {
@@ -256,6 +261,7 @@ function contactFields(text: string) {
 function heuristicKind(text: string, eventAt: string | null, explicit: boolean, endAt: string | null = null, now = new Date()): { kind: AutoMemoryKind; confidence: number } {
   const question = isQuestionLike(text);
   if (!explicit && isLiveExternalQuery(text)) return { kind: 'ignore', confidence: 0.99 };
+  if (!explicit && question) return { kind: 'ignore', confidence: 0.99 };
   const assignmentCue = /สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|ฝากให้|ให้[^\n]{0,120}(?:ทำ|จัด|รวบรวม|ถ่ายรูป|ส่ง|เตรียม|ตรวจ|แจ้ง)|รับผิดชอบ/i.test(text);
   const eventCue = /นัด|ประชุม|งานเลี้ยง|กิจกรรม|อบรม|สัมมนา|ทดสอบ|นิเทศ(?:การสอน)?|ประเมิน(?:\s*PA)?|ตรวจประเมิน|สังเกตการสอน|ตรวจเยี่ยมการสอน|จัดการเรียนการสอน|ทำสื่อ(?:การสอน)?|appointment|meeting|schedule/i.test(text);
   const taskCue = /ต้อง(?:ทำ|ส่ง|เตรียม|แจ้ง|ตรวจ)|อย่าลืม|เตือน(?:ให้)?|กำหนดส่ง|ภายใน|สั่ง(?:ไว้)?ให้|มอบหมาย(?:ไว้)?ให้|รับผิดชอบ|todo|task|deadline/i.test(text);
@@ -548,6 +554,11 @@ async function findAuthoritativeEventCollision(env:Env,token:string,decision:Aut
 function domainMetadata(input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string) {
   return { autoMemory: true, pinned: decision.explicit, retention: decision.retention, projectRef: clean(input.projectId, 160), source, sourceRef: clean(input.sourceRef, 500), conversationKey, score: decision.score, captureFingerprint };
 }
+function extractEventLocation(text:string):string {
+  const value=clean(text,4000);
+  const match=value.match(/(?:\s|^)(?:ณ|ที่)\s*((?:ร้านอาหาร|โรงเรียน|โรงแรม|หอประชุม|สำนักงาน|วัด|สนาม|ศูนย์)[^\n,;]{2,220})/i);
+  return clean(match?.[1],300);
+}
 
 async function persistMemory(env: Env, token: string, input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string) {
   const projectRef = clean(input.projectId, 160), projectId = projectUuid(input.projectId);
@@ -579,8 +590,13 @@ async function persistEvent(env: Env, token: string, input: AutoMemoryInput, dec
     }
   }
   const similar=await findSimilarEvent(env,token,decision);
-  if(similar){const mirror=await persistReplicaNode(env,token,{prefix:'evt',nodeType:'event',objectType:'event',objectId:similar.id,title:similar.title||decision.title,content:similar.description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[similar.id,clean(input.sourceRef,500)].filter(Boolean),eventAt:similar.start_at||decision.eventAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});return{kind:'event',id:similar.id,nodeId:mirror.nodeId,record:similar,replica:mirror.replica,duplicate:true,semanticDuplicate:true};}
-  const body: any = { title: decision.title, description: decision.content, event_type: decision.eventType, start_at: decision.eventAt, end_at: decision.endAt, all_day: decision.allDay, timezone: clean(input.timezone || 'Asia/Bangkok', 80), location: '', status: 'planned', priority: decision.importance >= 3 ? 'high' : 'normal', remind_at: null, tags: ['auto-memory', source], metadata: { ...domainMetadata(input, decision, source, conversationKey, captureFingerprint), endAt: decision.endAt, allDay: decision.allDay } };
+  if(similar){
+    let record=similar;
+    const newLocation=extractEventLocation(decision.content),existingLocation=clean(similar.location,300),contextualUpdate=clean(input.sourceRef,200)===String(similar.id||''),richer=(decision.explicit||contextualUpdate)&&(decision.content.length>clean(similar.description,4000).length+12||Boolean(newLocation&&!existingLocation));
+    if(richer){const patched=await rest<any[]>(env,token,`events${query({select:'*',id:`eq.${similar.id}`})}`,{method:'PATCH',body:{description:decision.content,location:newLocation||existingLocation,event_type:similar.event_type||decision.eventType,start_at:decision.eventAt,end_at:decision.endAt,all_day:decision.allDay,priority:'high',status:'planned',metadata:{...(similar.metadata||{}),...domainMetadata(input,decision,source,conversationKey,captureFingerprint),mergedFromExplicitUpdate:true}},prefer:'return=representation'}).catch(()=>[]);record=patched[0]||similar;}
+    const mirror=await persistReplicaNode(env,token,{prefix:'evt',nodeType:'event',objectType:'event',objectId:record.id,title:record.title||decision.title,content:record.description||decision.content,projectRef:clean(input.projectId,160),memoryKind:'prospective',importance:decision.importance,retentionPolicy:decision.explicit?'permanent':'standard',tier:decision.explicit?'pinned':'hot',topicIds:uniq(input.topics,30,120),sourceRefs:[record.id,clean(input.sourceRef,500)].filter(Boolean),eventAt:record.start_at||decision.eventAt,metadata:domainMetadata(input,decision,source,conversationKey,captureFingerprint)});return{kind:'event',id:record.id,nodeId:mirror.nodeId,record,replica:mirror.replica,duplicate:true,semanticDuplicate:true,merged:richer};
+  }
+  const body: any = { title: decision.title, description: decision.content, event_type: decision.eventType, start_at: decision.eventAt, end_at: decision.endAt, all_day: decision.allDay, timezone: clean(input.timezone || 'Asia/Bangkok', 80), location: extractEventLocation(decision.content), status: 'planned', priority: decision.importance >= 3 ? 'high' : 'normal', remind_at: null, tags: ['auto-memory', source], metadata: { ...domainMetadata(input, decision, source, conversationKey, captureFingerprint), endAt: decision.endAt, allDay: decision.allDay } };
   const projectId = projectUuid(input.projectId); if (projectId) body.project_id = projectId;
   const rows = await rest<any[]>(env, token, 'events?select=*', { method: 'POST', body, prefer: 'return=representation' });
   const record=rows[0]; if(!record)return null;
@@ -637,7 +653,8 @@ export async function autoCapture(env: Env, token: string, input: AutoMemoryInpu
 
   if (input.dryRun) return { decision, written: null, archive: null, duplicate: false, conversationKey, captureFingerprint };
   const authoritativeCollision=decision.kind==='event'&&!decision.explicit?await findAuthoritativeEventCollision(env,token,decision):null;
-  if(authoritativeCollision){
+  const contextualSourceId=clean(input.sourceRef,200);
+  if(authoritativeCollision&&contextualSourceId!==String(authoritativeCollision.row?.id||'')){
     const protectedDecision={...decision,retention:'consolidation' as AutoMemoryRetention,needsConfirmation:true};
     return { decision:protectedDecision, written:null, archive:null, duplicate:true, conversationKey, captureFingerprint, conflict:{type:'authoritative_event_exists',existingId:String(authoritativeCollision.row?.id||''),similarity:Math.round(Number(authoritativeCollision.similarity||0)*1000)/1000} };
   }

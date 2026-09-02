@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { autoCapture, classifyAutoMemoryHeuristic, containsAutoMemorySecret, parseThaiDateRange, parseThaiDateTime, resolveMemoryCaptureTurn } from '../src/auto-memory';
+import { autoCapture, classifyAutoMemoryHeuristic, containsAutoMemorySecret, isMemorySaveStatusQuestion, parseThaiDateRange, parseThaiDateTime, resolveMemoryCaptureTurn } from '../src/auto-memory';
 import { handleApi } from '../src/api';
 
 const env:any={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public',APP_ENV:'test'};
@@ -52,6 +52,13 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
     }
   });
 
+  it('never stores ordinary questions as events even when they contain event keywords',()=>{
+    for(const message of ['ประเมิน PA วันไหนบ้างนะ','เดือนนี้ประเมิน PA กี่โรงเรียน','วันที่ 17 ประเมินโรงเรียนไหน','บันทึกไว้ยัง']){
+      const d=classifyAutoMemoryHeuristic({message,source:'mobile'},now);
+      expect(d.kind).toBe('ignore');expect(d.retention).toBe('none');
+    }
+  });
+
   it('classifies a multi-day teaching assignment as a permanent structured event',()=>{
     const message='สั่งให้ครูช่วยกันทำสื่อการสอน และจัดการเรียนการสอนด้วย AI วันที่ 2-3 ก.ย. ให้ทำ 2 วัน และให้ครูดาวเป็นคนรวบรวม ถ่ายรูป';
     const d=classifyAutoMemoryHeuristic({message,source:'mobile'},now);
@@ -77,10 +84,14 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
 
   it('resolves bare save follow-ups to the latest user content, never the Ceo reply',()=>{
     const context=[{role:'user',text:'พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3'},{role:'ceo',text:'พรุ่งนี้ไม่มีนิเทศการสอนครูดาว'}];
-    const r=resolveMemoryCaptureTurn('ให้บันทึก',context);
-    expect(r.followUp).toBe(true);
-    expect(r.sourceText).toBe('พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
-    expect(r.message).toBe('บันทึกไว้ว่า พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
+    for(const command of ['ให้บันทึก','บันทึกให้ด้วย','บันทึกด้วย']){
+      const r=resolveMemoryCaptureTurn(command,context);
+      expect(r.followUp).toBe(true);
+      expect(r.sourceText).toBe('พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
+      expect(r.message).toBe('บันทึกไว้ว่า พรุ่งนี้นิเทศการสอนครูดาว คาบที่ 3');
+    }
+    expect(isMemorySaveStatusQuestion('บันทึกไว้ยัง')).toBe(true);
+    expect(isMemorySaveStatusQuestion('ได้บันทึกให้ไหม')).toBe(true);
   });
 
   it('treats correction plus save as a new explicit capture',()=>{

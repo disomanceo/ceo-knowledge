@@ -3,7 +3,7 @@ const clean=(v:unknown,max=5000)=>String(v??'').normalize('NFC').replace(/\u0000
 export type V2Intent='memory'|'event'|'task'|'news'|'current_fact'|'web'|'research'|'general';
 export type V2Route='memory'|'direct'|'web'|'research'|'ai';
 export type EventConstraint='dinner'|'retirement'|'assessment'|'meeting'|'training'|'test'|'none';
-export interface IntelligenceV2 {normalized:string;intent:V2Intent;route:V2Route;answerField:'date'|'time'|'location'|'person'|'status'|'general';eventConstraint:EventConstraint;requestedCount:number;fresh:boolean;entities:string[];confidence:number}
+export interface IntelligenceV2 {normalized:string;intent:V2Intent;route:V2Route;answerField:'date'|'time'|'location'|'person'|'status'|'general';eventConstraint:EventConstraint;requestedCount:number;fresh:boolean;aggregate:'count'|'list'|'none';entities:string[];confidence:number}
 
 const activityTerms=['ประเมิน','เลี้ยง','เกษียณ','นิเทศ','ประชุม','อบรม','รับทุน','ส่งเล่ม','สอบ','ทดสอบ'];
 export function normalizeThaiInput(input:string):string{
@@ -34,5 +34,6 @@ export function analyzeIntelligenceV2(input:string):IntelligenceV2{
   else if(constraint!=='none'||field!=='general'||/(?:โรงเรียน|ผอ\.?|ครู|นัด|กิจกรรม)/.test(normalized)){intent='event';route='memory';confidence=.88}
   else if(/(?:ช่วย)?(?:ค้น|หา|แนะนำ|รีวิว|เปรียบเทียบ)|(?:เว็บ|อินเทอร์เน็ต|ออนไลน์)|(?:ล่าสุด|ปัจจุบัน|ตอนนี้).*(?:อะไร|ไหน|อย่างไร|ยังไง|ให้หน่อย|บ้าง)?/i.test(normalized)&&!/(?:ความจำ|นัด|งานค้าง)/.test(normalized)){intent='web';route='web';confidence=.84}
   else if(/(?:งานค้าง|ต้องทำ|task|todo)/i.test(normalized)){intent='task';route='memory';confidence=.95}
-  return{normalized,intent,route,answerField:field,eventConstraint:constraint,requestedCount:intent==='news'?countFrom(normalized):3,fresh,entities:[],confidence};
+  const aggregate=/(?:กี่(?:โรงเรียน|แห่ง|งาน|รายการ|ครั้ง)|จำนวน(?:กี่|เท่าไร|เท่าไหร่)|ทั้งหมดกี่)/.test(normalized)?'count':/(?:มีอะไรบ้าง|ที่ไหนบ้าง|โรงเรียนไหนบ้าง|รายการไหนบ้าง)/.test(normalized)?'list':'none';
+  return{normalized,intent,route,answerField:field,eventConstraint:constraint,requestedCount:intent==='news'?countFrom(normalized):3,fresh,aggregate,entities:[],confidence};
 }

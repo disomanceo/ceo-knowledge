@@ -22,10 +22,10 @@ const range=(from:Date,to:Date)=>({from:from.toISOString(),to:to.toISOString()})
 const thaiDate=(value:Date,opts:Intl.DateTimeFormatOptions)=>new Intl.DateTimeFormat('th-TH',{timeZone:'Asia/Bangkok',...opts}).format(value);
 
 export function isQuestionLike(input:string){
-  const t=clean(input).replace(/[?？]+$/,'').trim();
+  const t=clean(input).replace(/[?？]+$/,'').replace(/\s*(?:ครับ|ค่ะ|คะ|นะ|หน่อย)\s*$/i,'').trim();
   return /[?？]\s*$/.test(input)
-    ||/(?:ไหม|หรือไม่|หรือยัง|รึยัง|หรือเปล่า|มั้ย|อะไร|อะไรบ้าง|ใคร|ใครบ้าง|ที่ไหน(?:บ้าง)?|วันไหน(?:บ้าง)?|วันอะไร(?:บ้าง)?|เมื่อไหร่(?:บ้าง)?|เมื่อไร(?:บ้าง)?|กี่โมง(?:บ้าง)?|เวลาไหน(?:บ้าง)?|อย่างไร|ยังไง|เท่าไร|กี่)\s*$/i.test(t)
-    ||/^(?:อะไร|ใคร|ที่ไหน|เมื่อไหร่|เมื่อไร|ทำไม|อย่างไร|ยังไง|what|who|where|when|why|how)\b/i.test(t);
+    ||/(?:ไหม|หรือไม่|หรือยัง|รึยัง|หรือเปล่า|เปล่า|มั้ย|หรอ|เหรอ|ยัง|อะไร|อะไรบ้าง|ใคร|ใครบ้าง|ไหน|ที่ไหน(?:บ้าง)?|วันไหน(?:บ้าง)?|วันอะไร(?:บ้าง)?|เมื่อไหร่(?:บ้าง)?|เมื่อไร(?:บ้าง)?|กี่โมง(?:บ้าง)?|เวลาไหน(?:บ้าง)?|อย่างไร|ยังไง|เท่าไร|กี่(?:\s*(?:โรงเรียน|แห่ง|งาน|รายการ|ครั้ง|คน|ตัว|เรื่อง))?)\s*$/i.test(t)
+    ||/^(?:อะไร|ใคร|ไหน|ที่ไหน|เมื่อไหร่|เมื่อไร|ทำไม|อย่างไร|ยังไง|what|who|where|when|why|how)\b/i.test(t);
 }
 
 function shiftDay(bp:{year:number;month:number;day:number},offset:number){const x=new Date(Date.UTC(bp.year,bp.month-1,bp.day+offset));return{year:x.getUTCFullYear(),month:x.getUTCMonth()+1,day:x.getUTCDate()}}
@@ -50,6 +50,8 @@ export function parseDateIntent(input:string,now=new Date()):DateIntent|null{
   else if(/(?:เมื่อวานซืน|วานซืน|day before yesterday)/i.test(t)){({year:y,month:m,day:d}=shiftDay(bp,-2))}
   else if(/(?:เมื่อวาน|yesterday)/i.test(t)){({year:y,month:m,day:d}=shiftDay(bp,-1))}
   else {
+    const weekday=t.match(/(?:วัน)?(จันทร์|อังคาร|พุธ|พฤหัสบดี|ศุกร์|เสาร์|อาทิตย์)\s*(?:หน้า|ถัดไป)/);
+    if(weekday?.[1]){const target=({อาทิตย์:0,จันทร์:1,อังคาร:2,พุธ:3,พฤหัสบดี:4,ศุกร์:5,เสาร์:6} as Record<string,number>)[weekday[1]];if(target!==undefined){const current=new Date(Date.UTC(bp.year,bp.month-1,bp.day)).getUTCDay();const delta=((target-current+7)%7)||7;({year:y,month:m,day:d}=shiftDay(bp,delta));return dayIntent(y,m,d,scope);}}
     const monthAlt=Object.keys(THAI_MONTHS).sort((a,b)=>b.length-a.length).map(reEscape).join('|');
     const dateCue=new RegExp('(?:วันที่\\s*\\d{1,2}|^\\s*\\d{1,2}\\s*(?:มีอะไร|มีงาน|มีนัด|มีเรื่อง|อะไรไหม|อะไรบ้าง)|\\d{1,2}\\s*(?:'+monthAlt+'|[/-]\\d{1,2}))','i');
     if(!dateCue.test(t))return null;
@@ -84,11 +86,12 @@ export function extractTemporalTopic(input:string){
     /\d{1,3}\s*(?:วัน|สัปดาห์|เดือน)\s*(?:ข้างหน้า|ถัดไป)/g,
     /(?:ช่วง|ในช่วง|ตั้งแต่|ถึง|จนถึง)/g,
     /^(?:มี|อยากรู้|ช่วยดู|ดูให้หน่อย|เช็ก|เช็ค)\s*/g,
-    /\s*(?:มี)?(?:กี่\s*(?:โรงเรียน|แห่ง|งาน|รายการ|ครั้ง)|จำนวน(?:กี่|เท่าไร|เท่าไหร่)|ทั้งหมดกี่|อะไรบ้าง|อะไร|บ้าง|ไหม|มั้ย|หรือไม่|หรือเปล่า|หรือยัง)\s*$/g,
+    /\s*(?:มี)?(?:โรงเรียนไหนบ้าง|รร\.?\s*ไหน|กี่\s*(?:โรงเรียน|แห่ง|งาน|รายการ|ครั้ง)|จำนวน(?:กี่|เท่าไร|เท่าไหร่)|ทั้งหมดกี่|อะไรบ้าง|อะไร|บ้าง|ไหม|มั้ย|หรือไม่|หรือเปล่า|หรือยัง)\s*$/g,
   ];
   for(const re of removals)t=t.replace(re,' ');
-  const topic=clean(t).replace(/^(?:มี)\s*/,'').replace(/^(?:โรงเรียน|แห่ง)\s*(?:ที่)?\s*/,'').replace(/\s*(?:กี่|จำนวน|ทั้งหมด)\s*$/,'').trim();
-  return /^(?:งาน|นัด|กิจกรรม|เรื่อง|รายการ|โรงเรียน|แห่ง)$/.test(topic)?'':topic;
+  let topic=clean(t).replace(/^(?:มี)\s*/,'').replace(/^(?:โรงเรียน|แห่ง)\s*(?:ที่)?\s*/,'').replace(/^(?:มี)?อะไร(?:บ้าง|ไหม|เปล่า)?\s*/,'').replace(/\s*(?:กี่|จำนวน|ทั้งหมด|อะไร|อะไรบ้าง|ไหม|เปล่า)\s*$/,'').trim();
+  if(/ประเมิน/i.test(topic)&&/\bpa\b/i.test(topic))topic=clean(topic.replace(/\bpa\b/ig,' '));
+  return /^(?:งาน|นัด|กิจกรรม|เรื่อง|รายการ|โรงเรียน|แห่ง|อะไร)$/.test(topic)?'':topic;
 }
 
 export function parseTemporalIntent(input:string,now=new Date()):TemporalIntent|null{

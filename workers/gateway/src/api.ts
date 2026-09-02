@@ -1,7 +1,7 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
-import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from './chat';
+import { cloudChatFallback, composeRecallAnswer, dedupeSemanticEvents, isBareRecallFieldQuestion, recallAction, recallAnswerField, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from './chat';
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
@@ -13,7 +13,7 @@ import { composeResearchAnswer } from './answer-intelligence';
 import { rerankMemoryCandidates } from './memory-reranker';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
-import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
+import { autoCapture, containsAutoMemorySecret, isMemorySaveStatusQuestion, resolveMemoryCaptureTurn } from './auto-memory';
 import { handleMcpRequest, type McpToolCallContext } from './mcp';
 import { applyMemoryMaintenance, manageMemoryNode, planMemoryMaintenance } from './memory-gardener';
 
@@ -43,6 +43,8 @@ function qs(params: Record<string, string | number | null | undefined>): string 
 
 function clean(value: unknown, max = 10_000): string { return String(value ?? '').replace(/\u0000/g, '').trim().slice(0, max); }
 function tags(value: unknown): string[] { return Array.isArray(value) ? [...new Set(value.map(v => clean(v, 100)).filter(Boolean))].slice(0, 40) : []; }
+function tokenDice(a:string,b:string):number{const x=clean(a,120).toLocaleLowerCase(),y=clean(b,120).toLocaleLowerCase();if(!x||!y)return 0;if(x===y)return 1;if(x.length<2||y.length<2)return 0;const grams=(s:string)=>{const out=new Map<string,number>();for(let i=0;i<s.length-1;i++){const g=s.slice(i,i+2);out.set(g,(out.get(g)||0)+1)}return out},gx=grams(x),gy=grams(y);let hit=0;for(const [g,n] of gx){const m=gy.get(g)||0;hit+=Math.min(n,m)}return(2*hit)/([...gx.values()].reduce((a,b)=>a+b,0)+[...gy.values()].reduce((a,b)=>a+b,0));}
+function fuzzyRecallMatch(queryTokens:string[],row:any):number{if(!queryTokens.length)return 0;const words=clean([row?.title,row?.description,row?.location,row?.content].filter(Boolean).join(' '),5000).toLocaleLowerCase().replace(/[^\p{L}\p{M}\p{N}]+/gu,' ').split(/\s+/).filter(Boolean);if(!words.length)return 0;const scores=queryTokens.map(token=>Math.max(...words.map(word=>word.includes(token)||token.includes(word)?Math.min(1,Math.min(word.length,token.length)/Math.max(word.length,token.length)+.2):tokenDice(token,word))));return scores.reduce((a,b)=>a+b,0)/scores.length;}
 
 function bangkokDayRange(date = new Date()): { from: string; to: string } {
   const bangkok = new Date(date.getTime() + 7 * 60 * 60 * 1000);
@@ -101,10 +103,11 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   const normalizedSearch = recallSearchTerms(q) || recallQ;
   const recallTerms = [...new Set(normalizedSearch.split(/\s+/).filter(Boolean).flatMap(token => token.length >= 6 ? [token, token.slice(0, -1)] : [token]))].join(' ');
   const perTable = Math.max(5, Math.min(25, limit * 2));
+  const structuredRecall=answerField!=='general'||recallAction(q)!=='none'||/(?:โรงเรียน|\bPA\b|ทุน|นัด|ประชุม|ประเมิน|เกษียณ|นิเทศ|อบรม|สอบ|ทดสอบ)/i.test(q);
   const specs = [
     ['memories', ['title', 'content'], 'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at'],
     ['decisions', ['title', 'content', 'rationale'], 'id,title,content,rationale,importance,status,tags,decided_at,created_at,updated_at'],
-    ['conversation_summaries', ['title', 'summary'], 'id,title,summary,decisions,open_loops,facts,status,metadata,created_at,updated_at'],
+    ...(!structuredRecall?[[ 'conversation_summaries', ['title', 'summary'], 'id,title,summary,decisions,open_loops,facts,status,metadata,created_at,updated_at' ] as const]:[]),
     ['knowledge_entries', ['title', 'summary', 'content'], 'id,title,summary,content,knowledge_type,topic,importance,confidence,status,tags,created_at,updated_at'],
   ] as const;
   const rows: any[] = [];
@@ -116,11 +119,25 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   const eventOr = recallTerms ? searchOr(['title','description','location'], recallTerms) : '';
   const taskOr = recallTerms ? searchOr(['title','description','waiting_for'], recallTerms) : '';
   const [eventRows, taskRows] = await Promise.all([
-    eventOr ? rest<any[]>(env, token, `events${qs({ select:'*', status:'neq.cancelled', or:eventOr, order:'start_at.asc', limit:perTable })}`).catch(() => []) : Promise.resolve([]),
-    taskOr ? rest<any[]>(env, token, `tasks${qs({ select:'*', status:'neq.cancelled', or:taskOr, order:'due_at.asc.nullslast,updated_at.desc', limit:perTable })}`).catch(() => []) : Promise.resolve([]),
+    eventOr ? rest<any[]>(env, token, `events${qs({ select:'*', status:'neq.cancelled', or:eventOr, order:'start_at.asc', limit:perTable })}`).catch(() => []) : Promise.resolve<any[]>([]),
+    taskOr ? rest<any[]>(env, token, `tasks${qs({ select:'*', status:'neq.cancelled', or:taskOr, order:'due_at.asc.nullslast,updated_at.desc', limit:perTable })}`).catch(() => []) : Promise.resolve<any[]>([]),
   ]);
+  if(!eventRows.length&&structuredRecall&&recallTerms){
+    const fuzzyTokens=recallTerms.toLocaleLowerCase().split(/\s+/).filter(token=>token.length>=2);
+    const broadEvents=await rest<any[]>(env,token,`events${qs({select:'*',status:'neq.cancelled',order:'start_at.asc',limit:100})}`).catch(()=>[]);
+    const fuzzy=broadEvents.map(row=>({row,score:fuzzyRecallMatch(fuzzyTokens,row)})).filter(item=>item.score>=0.68).sort((a,b)=>b.score-a.score).slice(0,perTable);
+    eventRows.push(...fuzzy.map(item=>({...item.row,_fuzzyScore:item.score})));
+  }
   rows.push(...eventRows.map(row => ({ ...row, kind:'events', content:clean([row.description,row.location,row.start_at].filter(Boolean).join(' · '),5000), importance:2, updated_at:row.updated_at || row.start_at || row.created_at })));
   rows.push(...taskRows.map(row => ({ ...row, kind:'tasks', content:clean([row.description,row.waiting_for,row.due_at].filter(Boolean).join(' · '),5000), importance:2 })));
+  if(preferredSourceId){
+    const [lockedEvents,lockedTasks,lockedMemories]=await Promise.all([
+      rest<any[]>(env,token,`events${qs({select:'*',id:`eq.${preferredSourceId}`,limit:1})}`).catch(()=>[]),
+      rest<any[]>(env,token,`tasks${qs({select:'*',id:`eq.${preferredSourceId}`,limit:1})}`).catch(()=>[]),
+      rest<any[]>(env,token,`memories${qs({select:'*',id:`eq.${preferredSourceId}`,limit:1})}`).catch(()=>[]),
+    ]);
+    rows.push(...lockedEvents.map(row=>({...row,kind:'events',content:clean([row.description,row.location,row.start_at].filter(Boolean).join(' · '),5000),importance:3,_sourceLocked:true})),...lockedTasks.map(row=>({...row,kind:'tasks',content:clean([row.description,row.waiting_for,row.due_at].filter(Boolean).join(' · '),5000),importance:3,_sourceLocked:true})),...lockedMemories.map(row=>({...row,kind:'memories',_sourceLocked:true})));
+  }
   const replicaOr = recallTerms ? searchOr(['title','content'], recallTerms) : '';
   const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,tier,retention_policy,source_kind,truth_status,metadata,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
   const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
@@ -128,8 +145,9 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   rows.length = 0;
   rows.push(...legacyOnly, ...replicaRows.filter(row => row?.metadata?.archived!==true && !memoryLooksLikeQuestion(row)).map(row => ({ ...row, id:row.node_id, kind:'memory_nodes', memory_type:row.memory_kind, scope:row.project_ref ? 'project' : 'global', status:'active', tags:[] })));
   const tokens = recallTerms.toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  const lockedRows=preferredSourceId?rows.filter(row=>String(row.id||row.node_id||'')===preferredSourceId):[];
   const strictRows = rows.filter(row => recallSubjectMatches(q,row));
-  const candidateRows = strictRows.length ? strictRows : rows;
+  const candidateRows = lockedRows.length ? [...lockedRows,...strictRows.filter(row=>!lockedRows.includes(row))] : strictRows.length ? strictRows : rows;
   const ranked = candidateRows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
     const body = clean(row.content || row.summary || row.rationale || '', 5000).toLocaleLowerCase();
@@ -488,7 +506,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/search' && request.method === 'GET') return ok(await searchKnowledge(env, token, clean(url.searchParams.get('q'), 240), safeLimit(url.searchParams.get('limit'), 10, 30)));
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
-      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string;sourceId?:string;query?:string}>; router?:{mode?:string;provider?:string;model?:string;backgroundModel?:string} }>(request), message = clean(body.message, 4000);
+      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string;sourceId?:string;query?:string}>; router?:{mode?:string;provider?:string;model?:string;backgroundModel?:string}; clientContext?:{latitude?:number;longitude?:number;timezone?:string} }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
       const routerMode=['auto','provider','model'].includes(clean(body.router?.mode,20))?clean(body.router?.mode,20):'auto';
       const requestedProvider=['gemini','openai','claude','ollama'].includes(clean(body.router?.provider,40))?clean(body.router?.provider,40):'auto';
@@ -496,12 +514,19 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const routeModel=routerMode==='model'?clean(body.router?.model,120):'';
       const backgroundModel=routerMode==='auto'?'':clean(body.router?.backgroundModel,120);
       const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000),sourceId:clean(item?.sourceId,200),query:clean(item?.query,1000)})).filter(item=>item.text);
+      if(isMemorySaveStatusQuestion(message)){
+        const priorAck=[...recentContext].reverse().find(item=>(item.role==='ceo'||item.role==='assistant')&&/(?:บันทึก|จำไว้|รับทราบ).*(?:แล้ว|เรียบร้อย)|บันทึกเป็น(?:กิจกรรม|งาน)|จำไว้ใน Ceo Knowledge/i.test(item.text));
+        const answer=priorAck?'บันทึกไว้แล้วครับ':'ยังไม่พบการยืนยันว่าข้อความก่อนหน้าถูกบันทึกครับ';
+        return ok({intent:'memory-status',answer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null});
+      }
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
       const previousSource=[...recentContext].reverse().find(item=>item.role==='ceo'&&item.sourceId);
       const bareField=isBareRecallFieldQuestion(message);
-      const legacyContextualQuery=bareField&&previousUser?previousUser.text:message;
+      const bareSchoolList=/^\s*(?:รร\.?|โรงเรียน)\s*(?:ไหน|อะไร)(?:บ้าง)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(message);
+      const listContextQuery=bareSchoolList&&previousUser?`${previousUser.text.replace(/กี่\s*โรงเรียน|จำนวน\s*โรงเรียน|ทั้งหมดกี่\s*โรงเรียน/gi,'').trim()} โรงเรียนไหนบ้าง`:'';
+      const legacyContextualQuery=listContextQuery||(bareField&&previousUser?previousUser.text:message);
       const contextResolution=await resolveConversationContext(env,message,recentContext,{model:backgroundModel});
-      const resolvedQuery=contextResolution.confidence>=0.6?contextResolution.resolvedQuery:legacyContextualQuery;
+      const resolvedQuery=listContextQuery||(contextResolution.confidence>=0.6?contextResolution.resolvedQuery:legacyContextualQuery);
       const preferredSourceId=(bareField||contextResolution.dependsOnPriorContext)?clean(previousSource?.sourceId,200):'';
       const contextMeta=contextResolutionPublic(contextResolution);
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
@@ -511,7 +536,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         return ok({intent:'clarification',answer:'ขอระบุอีกนิดครับว่าหมายถึงเรื่องไหน เพื่อไม่ให้ผมเดาผิดบริบท',mode:'clarification',provider:'knowledge',ai:true,aiConfigured:cloudAiConfig(env).configured,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
       }
       if (intent.kind === 'live' || ['news','current_fact','web','research'].includes(intelligenceV2.intent)) {
-        const direct=await resolveLiveDirect(resolvedQuery).catch(()=>null);
+        const direct=await resolveLiveDirect(resolvedQuery,fetch,{latitude:Number(body.clientContext?.latitude),longitude:Number(body.clientContext?.longitude),timezone:clean(body.clientContext?.timezone,80)||'Asia/Bangkok'}).catch(()=>null);
         if(direct?.ok){const spoken=String(direct.answer||'').replace(/\s*·\s*/g,' ');return ok({intent:'live',semanticIntent:intelligenceV2.intent,answer:direct.answer,displayText:direct.answer,spokenText:spoken,speechChunks:[spoken],search:{query:resolvedQuery,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-direct',provider:'direct',source:direct.source,sources:[{title:direct.source,url:direct.sourceUrl}],liveData:direct.data,intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});}
         const shouldResearch=intelligenceV2.intent==='news'||intelligenceV2.intent==='web'||intelligenceV2.intent==='research'||intelligenceV2.intent==='current_fact';
         if(shouldResearch){
@@ -530,7 +555,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if (!question) {
         if(memoryTurn.followUp&&!memoryTurn.message)return ok({intent:'remember',answer:'ยังไม่มีข้อความก่อนหน้าที่ชัดเจนให้บันทึกครับ',memory:null,autoMemory:null,mode:'knowledge',provider:'knowledge'});
         try {
-          autoMemory = await autoCapture(env, token, { message:memoryTurn.message||message, conversationId: body.conversationId, projectId: body.projectId, sourceRef: body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
+          const contextualCapture=contextResolution.dependsOnPriorContext&&resolvedQuery&&resolvedQuery!==message?resolvedQuery:'';
+          const captureMessage=memoryTurn.message||contextualCapture||message;
+          autoMemory = await autoCapture(env, token, { message:captureMessage, conversationId: body.conversationId, projectId: body.projectId, sourceRef: preferredSourceId||body.sourceRef, conversationSummary: body.conversationSummary, topics: body.topics, source: 'mobile' });
           if (autoMemory?.decision?.blocked && autoMemory?.decision?.explicit) return ok({ intent: 'remember', answer: 'ไม่บันทึกข้อความนี้ เพราะตรวจพบข้อมูลลับหรือข้อมูลอ่อนไหว', memory: null, autoMemory });
           const durableWrite=Boolean(autoMemory?.written)&&(Boolean(autoMemory?.decision?.explicit)||(['event','task'].includes(String(autoMemory?.decision?.kind))&&Number(autoMemory?.decision?.confidence||0)>=0.9));
           if(durableWrite){
@@ -549,8 +576,22 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       if (intent.kind === 'date' || intent.kind === 'temporal') {
         const temporal = await temporalKnowledge(env, token, intent);
+        if(originalV2.aggregate==='count'&&originalV2.eventConstraint!=='none'){
+          const constrained=dedupeSemanticEvents(temporal.events.filter((row:any)=>eventConstraintMatches(originalV2.eventConstraint,row)));
+          const schoolKeys=new Set(constrained.map((row:any)=>clean(`${row.title||''} ${row.description||''}`,1200).match(/โรงเรียน(?:วัด)?\s*([^—–,·\n]+?)(?=\s*(?:วันที่|เวลา|$))/u)?.[1]?.replace(/^วัด\s*/,'').trim()).filter(Boolean));
+          const count=schoolKeys.size||constrained.length;
+          const answer=count?`เดือนนี้มี ${count} โรงเรียนที่ต้องประเมินครับ`:'เดือนนี้ยังไม่พบโรงเรียนที่ต้องประเมินจากข้อมูลที่บันทึกไว้ครับ';
+          return ok({intent:intent.kind,answer,aggregate:{type:'count',count,events:constrained},temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:false,mode:'knowledge',provider:'knowledge',autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        }
+        const temporalField=contextResolution.answerField!=='general'?contextResolution.answerField:recallAnswerField(message);
+        if(temporalField!=='general'){
+          const rows=[...temporal.events.map((row:any)=>({...row,kind:'events'})),...temporal.tasks.map((row:any)=>({...row,kind:'tasks'})),...temporal.memories];
+          const constrained=originalV2.eventConstraint!=='none'?rows.filter((row:any)=>eventConstraintMatches(originalV2.eventConstraint,row)):rows;
+          const direct=composeRecallAnswer(message,constrained.length?constrained:rows);
+          if(direct.confident)return ok({intent:intent.kind,answer:direct.answer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:false,mode:'knowledge',provider:'knowledge',autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:direct.field,sourceId:direct.sourceId||preferredSourceId}});
+        }
         const fallbackAnswer=composeTemporalAnswer(intent,temporal);
-        if(intent.scope==='appointments'&&(temporal.events.length||temporal.tasks.length||temporal.memories.length)){
+        if(intent.scope==='appointments'&&contextResolution.ambiguous&&(temporal.events.length||temporal.tasks.length||temporal.memories.length)){ 
           const groundedRows=[
             ...temporal.events.map((e:any)=>({kind:'event',title:clean(e.title||e.description,240),content:clean(`start=${e.start_at||''}; end=${e.end_at||''}; allDay=${Boolean(e.all_day)}; type=${e.event_type||''}; location=${e.location||''}; detail=${e.description||''}`,1600)})),
             ...temporal.tasks.map((t:any)=>({kind:'task',title:clean(t.title||t.description,240),content:clean(`due=${t.due_at||''}; status=${t.status||''}; detail=${t.description||''}`,1600)})),

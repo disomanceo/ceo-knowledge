@@ -10,7 +10,7 @@ function stripMemoryPrefix(value:unknown):string {
 
 export function recallAnswerField(message:string):RecallAnswerField {
   const text=clean(message,4000);
-  if(/(?:ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|ร้าน(?:อาหาร)?(?:ไหน|อะไร)|กินเลี้ยงที่ไหน)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'location';
+  if(/(?:ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|ร้าน(?:อาหาร)?(?:ไหน|อะไร)|กินเลี้ยงที่ไหน)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text)||/^\s*ร้านอาหาร\s+\S+/i.test(text))return'location';
   if(/(?:กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'time';
   if(/(?:วันไหน|วันอะไร|วันที่(?:เท่าไร|อะไร)|เมื่อไร|เมื่อไหร่)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'date';
   if(/(?:ใคร|ใครบ้าง|กับใคร|พาใคร|ผู้เกี่ยวข้อง(?:มี)?ใครบ้าง)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'person';
@@ -134,7 +134,7 @@ function sameSemanticEvent(a:any,b:any):boolean {
   const actionA=recallAction(ta),actionB=recallAction(tb);if(actionA!=='none'&&actionB!=='none'&&actionA!==actionB)return false;
   return common.length>=2||(common.length>=1&&Math.min(aa.size,bb.size)<=2);
 }
-function dedupeSemanticEvents(rows:any[]):any[] {
+export function dedupeSemanticEvents(rows:any[]):any[] {
   const out:any[]=[];
   for(const row of rows){const index=out.findIndex(existing=>sameSemanticEvent(existing,row));if(index<0){out.push(row);continue}if(eventCanonicalScore(row)>eventCanonicalScore(out[index]))out[index]=row;}
   return out;

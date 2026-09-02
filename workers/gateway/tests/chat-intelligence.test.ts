@@ -15,10 +15,11 @@ describe('chat intelligence',()=>{
  it('does not treat ordinary numbers as calendar dates',()=>{expect(detectChatIntent('โปรเจกต์ 2 มีอะไรไหม',now).kind).toBe('recall')});
  it('routes a bare leading day question as a date',()=>{const x=detectChatIntent('17 มีอะไรไหม',now);expect(x.kind).toBe('date');if(x.kind==='date'){expect(x.day).toBe(17);expect(x.month).toBe(9)}});
  it('matches exact Thai dates embedded in memory text',()=>{const i=parseDateIntent('17 ก.ย. มีอะไร',now)!;expect(dateTextMatchesIntent('วันที่ 17 กันยายน 2569 ต้องส่งเล่ม PA ให้สำนักงานเขต',i)).toBe(true);expect(dateTextMatchesIntent('วันที่ 18 กันยายน 2569 มีงานเลี้ยง',i)).toBe(false)});
- it('supports relative day vocabulary',()=>{expect(parseDateIntent('พรุ่งนี้มีอะไร',now)?.day).toBe(2);expect(parseDateIntent('มะรืนมีอะไร',now)?.day).toBe(3);expect(parseDateIntent('เมื่อวานมีอะไร',now)?.day).toBe(31);expect(parseDateIntent('วานซืนมีอะไร',now)?.day).toBe(30)});
+ it('supports relative day vocabulary',()=>{expect(parseDateIntent('พรุ่งนี้มีอะไร',now)?.day).toBe(2);expect(parseDateIntent('มะรืนมีอะไร',now)?.day).toBe(3);expect(parseDateIntent('เมื่อวานมีอะไร',now)?.day).toBe(31);expect(parseDateIntent('วานซืนมีอะไร',now)?.day).toBe(30);expect(detectChatIntent('พรุ่งนี้มีอะไรเปล่า',now).kind).toBe('date')});
+ it('understands next Thai weekday as a concrete date',()=>{const wed=new Date('2026-09-02T01:00:00Z');const x=parseDateIntent('วันจันทร์หน้ามีกิจกรรมอะไรไหม',wed)!;expect(x.year).toBe(2026);expect(x.month).toBe(9);expect(x.day).toBe(7)});
  it('parses week month and year ranges centrally',()=>{expect(parseTemporalIntent('สัปดาห์หน้ามีอะไรบ้าง',now)?.granularity).toBe('week');expect(parseTemporalIntent('เดือนนี้มีงานเกษียณอะไรบ้าง',now)?.month).toBe(9);expect(parseTemporalIntent('เดือนหน้า มีอะไร',now)?.month).toBe(10);expect(parseTemporalIntent('ปีหน้า มีอะไร',now)?.year).toBe(2027);expect(parseTemporalIntent('ปีที่แล้ว มีอะไร',now)?.year).toBe(2025)});
  it('parses named month year and forward windows',()=>{const m=parseTemporalIntent('เดือนตุลาคม 2569 มีอะไรบ้าง',now)!;expect(m.month).toBe(10);expect(m.year).toBe(2026);expect(parseTemporalIntent('ภายใน 7 วัน มีอะไร',now)?.granularity).toBe('range')});
- it('extracts a temporal topic instead of searching the whole sentence',()=>{expect(extractTemporalTopic('เดือนนี้มีงานเกษียณอะไรบ้าง')).toBe('งานเกษียณ');expect(extractTemporalTopic('เดือนนี้มีงานอะไรบ้าง')).toBe('')});
+ it('extracts a temporal topic instead of searching the whole sentence',()=>{expect(extractTemporalTopic('เดือนนี้มีงานเกษียณอะไรบ้าง')).toBe('งานเกษียณ');expect(extractTemporalTopic('เดือนนี้มีงานอะไรบ้าง')).toBe('');expect(extractTemporalTopic('อาทิตย์หน้ามีอะไรไหม')).toBe('')});
  it('matches explicit memory dates against a broad temporal range',()=>{const i=parseTemporalIntent('เดือนนี้มีงานเกษียณอะไรบ้าง',now)!;expect(temporalTextMatchesIntent('วันที่ 18 กันยายน 2569 มีงานเลี้ยงเกษียณ',i)).toBe(true);expect(temporalTextMatchesIntent('วันที่ 18 ตุลาคม 2569 มีงานเลี้ยงเกษียณ',i)).toBe(false)});
  it('composes secretary-style date answer',()=>{const i=parseDateIntent('วันที่ 18 มีอะไรไหม',now)!;const a=composeDateAnswer(i,{events:[{title:'งานเกษียณ',start_at:'2026-09-18T10:00:00Z',location:''}],tasks:[],memories:[]});expect(a).toContain('งานเกษียณ');expect(a).not.toContain('พบข้อมูลที่เกี่ยวข้อง')});
  it('omits retrieval labels from memory rows in natural date answers',()=>{const i=parseDateIntent('วันที่ 17 มีอะไรไหม',now)!;const a=composeTemporalAnswer(i,{events:[],tasks:[],memories:[{title:'Memory: ส่งเล่ม PA สำนักงานเขต'}]});expect(a).toContain('ส่งเล่ม PA สำนักงานเขต');expect(a).not.toContain('ความจำ:');expect(a).not.toContain('Memory:')});
@@ -112,8 +113,8 @@ describe('structured chat retrieval',()=>{
    });
    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'พรุ่งนี้มีนัดอะไรไหม'})}),apiEnv),payload:any=await response.json();
    expect(payload.data.range.scope).toBe('appointments');expect(payload.data.temporal.events).toHaveLength(1);expect(payload.data.temporal.events[0].id).toBe('supervise');
-   expect(payload.data.fallbackAnswer).toContain('นิเทศการสอนครูดาว คาบที่ 3');expect(payload.data.fallbackAnswer).not.toContain('จัดทำสื่อ');expect(payload.data.fallbackAnswer).not.toContain('00:00');
-   expect(payload.data.mode).toBe('runtime-provider-pending');const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.arguments.task).toBe('reasoning');expect(job.body.arguments.live).toBe(false);expect(job.body.arguments.context).toHaveLength(1);
+   expect(payload.data.answer).toContain('นิเทศการสอนครูดาว คาบที่ 3');expect(payload.data.answer).not.toContain('จัดทำสื่อ');expect(payload.data.answer).not.toContain('00:00');
+   expect(payload.data.mode).toBe('knowledge');const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job).toBeUndefined();
    }finally{vi.useRealTimers();}
  });
  it('dedupes legacy movie memory before AI synthesis for สัปดาห์หน้ามีนัดไหม',async()=>{
@@ -129,8 +130,8 @@ describe('structured chat retrieval',()=>{
      throw new Error('unexpected '+method+' '+url);
    });
    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'สัปดาห์หน้ามีนัดไหม'})}),apiEnv),payload:any=await response.json();
-   expect(payload.data.range.scope).toBe('appointments');expect(payload.data.temporal.events).toHaveLength(1);expect(payload.data.temporal.memories).toHaveLength(0);expect(payload.data.fallbackAnswer).toContain('Big C สุพรรณบุรี');expect(payload.data.fallbackAnswer).not.toContain('00:00');
-   const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.arguments.context).toHaveLength(1);
+   expect(payload.data.range.scope).toBe('appointments');expect(payload.data.temporal.events).toHaveLength(1);expect(payload.data.temporal.memories).toHaveLength(0);expect(payload.data.answer).toContain('Big C สุพรรณบุรี');expect(payload.data.answer).not.toContain('00:00');
+   const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job).toBeUndefined();
    }finally{vi.useRealTimers();}
  });
 });
