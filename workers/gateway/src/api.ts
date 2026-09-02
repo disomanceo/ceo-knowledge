@@ -10,6 +10,7 @@ import { resolveLiveDirect } from './live-resolver';
 import { analyzeIntelligenceV2, eventConstraintMatches } from './intelligence-v2';
 import { researchTelemetry, researchWeb } from './web-research';
 import { composeResearchAnswer } from './answer-intelligence';
+import { rerankMemoryCandidates } from './memory-reranker';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
@@ -576,6 +577,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const answerField=contextResolution.answerField!=='general'?contextResolution.answerField:currentField;
       const search = await searchKnowledge(env, token, resolvedQuery, 8, answerField, preferredSourceId);
       if(originalV2.eventConstraint!=='none'){const constrained=search.results.filter((row:any)=>eventConstraintMatches(originalV2.eventConstraint,row));if(constrained.length){search.results=constrained;search.count=constrained.length;}}
+      const memoryRerank=await rerankMemoryCandidates(env,message,search.results,{provider:routeProvider,model:backgroundModel||routeModel});
+      search.results=memoryRerank.rows;search.count=memoryRerank.rows.length;
       const compositionMessage=answerField!==currentField&&contextResolution.usedAI?resolvedQuery:message;
       const directAnswer=composeRecallAnswer(compositionMessage,search.results);
       const fallbackAnswer = directAnswer.answer || cloudChatFallback(compositionMessage, search.results);

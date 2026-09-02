@@ -2,6 +2,7 @@ const clean=(value:unknown,max=6000)=>String(value??'').replace(/\u0000/g,'').tr
 const normalizeThaiRecall=(value:string)=>value.replace(/เกณียณ|เกษียน|เกษีณ/g,'เกษียณ').replace(/ภาพยนต์/g,'ภาพยนตร์');
 
 export type RecallAnswerField='date'|'time'|'location'|'person'|'status'|'general';
+export type RecallAction='send'|'assess'|'dinner'|'meeting'|'training'|'test'|'none';
 
 function stripMemoryPrefix(value:unknown):string {
   return clean(value,1200).replace(/^(?:(?:memory|question)\s*:\s*)+/i,'').trim();
@@ -47,7 +48,7 @@ function normalizeRecallMatchText(value:string):string {
   return normalizeThaiRecall(clean(value,5000).toLocaleLowerCase())
     .replace(/กินเลี้ยง/g,'เลี้ยง ')
     .replace(/เกษียณงาน/g,'เกษียณ งาน')
-    .replace(/(ประเมิน|เลี้ยง|เกษียณ|นิเทศ|ประชุม|อบรม|รับทุน|ส่งเล่ม|สอบ|ทดสอบ)/g,' $1 ')
+    .replace(/(ส่งเล่ม|ส่งเอกสาร|ส่ง|ประเมิน|เลี้ยง|เกษียณ|นิเทศ|ประชุม|อบรม|รับทุน|สอบ|ทดสอบ)/g,' $1 ')
     .replace(/(?:พี่|ครู|ผอ\.?)[\s]*(?=[\p{L}\p{N}])/gu,' ')
     .replace(/big\s*c/g,'bigc')
     .replace(/[^\p{L}\p{M}\p{N}]+/gu,' ')
@@ -63,6 +64,28 @@ export function recallMatchTokens(message:string):string[] {
 
 export function recallSearchTerms(message:string):string {
   return recallMatchTokens(message).join(' ');
+}
+
+export function recallAction(message:string):RecallAction {
+  const text=normalizeRecallMatchText(message);
+  if(/(?:^|\s)(?:ส่ง|ส่งเล่ม|ส่งเอกสาร)(?:\s|$)/u.test(text))return'send';
+  if(/(?:^|\s)(?:ประเมิน|ตรวจประเมิน)(?:\s|$)|\bpa\b.*(?:ประเมิน|ตรวจ)/iu.test(text))return'assess';
+  if(/(?:กิน\s*เลี้ยง|งานเลี้ยง|เลี้ยงเกษียณ)/u.test(text))return'dinner';
+  if(/(?:ประชุม|นัด)/u.test(text))return'meeting';
+  if(/(?:อบรม|สัมมนา)/u.test(text))return'training';
+  if(/(?:สอบ|ทดสอบ)/u.test(text))return'test';
+  return'none';
+}
+
+export function recallActionMatches(action:RecallAction,row:any):boolean {
+  if(action==='none')return true;
+  const hay=normalizeRecallMatchText([row?.event_type,row?.title,row?.description,row?.content,row?.summary,row?.rationale,row?.waiting_for].filter(Boolean).join(' '));
+  if(action==='send')return/(?:^|\s)(?:ส่ง|ส่งเล่ม|ส่งเอกสาร)(?:\s|$)/u.test(hay);
+  if(action==='assess')return/(?:^|\s)(?:ประเมิน|ตรวจประเมิน)(?:\s|$)/u.test(hay);
+  if(action==='dinner')return/(?:กิน\s*เลี้ยง|งานเลี้ยง|เลี้ยงเกษียณ)/u.test(hay);
+  if(action==='meeting')return/(?:ประชุม|นัด)/u.test(hay);
+  if(action==='training')return/(?:อบรม|สัมมนา)/u.test(hay);
+  return/(?:สอบ|ทดสอบ)/u.test(hay);
 }
 
 export function recallSubjectMatches(message:string,row:any):boolean {
@@ -81,12 +104,41 @@ function thaiTime(value:unknown):string {
   if(Number.isNaN(date.getTime()))return'';
   return date.toLocaleTimeString('th-TH',{timeZone:'Asia/Bangkok',hour:'2-digit',minute:'2-digit'});
 }
+function thaiDateFromText(value:unknown):string {
+  const text=clean(value,5000),months:Record<string,number>={มค:1,มกราคม:1,กพ:2,กุมภาพันธ์:2,มีค:3,มีนาคม:3,เมย:4,เมษายน:4,พค:5,พฤษภาคม:5,มิย:6,มิถุนายน:6,กค:7,กรกฎาคม:7,สค:8,สิงหาคม:8,กย:9,กันยายน:9,ตค:10,ตุลาคม:10,พย:11,พฤศจิกายน:11,ธค:12,ธันวาคม:12};
+  const m=text.match(/(?:วันที่\s*)?(\d{1,2})\s*(ม\.?ค\.?|มกราคม|ก\.?พ\.?|กุมภาพันธ์|มี\.?ค\.?|มีนาคม|เม\.?ย\.?|เมษายน|พ\.?ค\.?|พฤษภาคม|มิ\.?ย\.?|มิถุนายน|ก\.?ค\.?|กรกฎาคม|ส\.?ค\.?|สิงหาคม|ก\.?ย\.?|กันยายน|ต\.?ค\.?|ตุลาคม|พ\.?ย\.?|พฤศจิกายน|ธ\.?ค\.?|ธันวาคม)\s*(\d{2,4})?/i);
+  if(!m)return'';const key=String(m[2]||'').replace(/\./g,'').toLocaleLowerCase(),month=months[key];if(!month)return'';let year=Number(m[3]||0);if(year>2400)year-=543;else if(year>0&&year<100)year+=2000;if(!year)year=new Date().getFullYear();const d=new Date(Date.UTC(year,month-1,Number(m[1]),5));return thaiDate(d.toISOString());
+}
 function rowText(row:any):string {
   return stripMemoryPrefix(row?.content||row?.summary||row?.rationale||row?.description||row?.title||'');
 }
 function firstEvent(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='events'&&predicate(row));}
 function firstTask(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='tasks'&&predicate(row));}
 function isAutoMemoryRow(row:any){return row?.metadata?.autoMemory===true||(Array.isArray(row?.tags)&&row.tags.includes('auto-memory'));}
+function eventSemanticText(row:any):string {
+  return normalizeRecallMatchText(`${clean(row?.title,500)} ${clean(row?.description,1200)}`)
+    .replace(/(?:วันที่|วัน|เวลา|โรงเรียน|วัด|งาน)/g,' ')
+    .replace(/\b\d{1,4}\b/g,' ')
+    .replace(/\s+/g,' ')
+    .trim();
+}
+function eventCanonicalScore(row:any):number {
+  const meta=row?.metadata&&typeof row.metadata==='object'?row.metadata:{};
+  return (isAutoMemoryRow(row)?-40:40)+(meta.canonical===true?30:0)+(clean(row?.description,1200).length>20?8:0)+(clean(row?.location,300)?4:0);
+}
+function sameSemanticEvent(a:any,b:any):boolean {
+  if(!a?.start_at||!b?.start_at||thaiDate(a.start_at)!==thaiDate(b.start_at))return false;
+  const ta=eventSemanticText(a),tb=eventSemanticText(b);if(!ta||!tb)return false;
+  const aa=new Set(ta.split(/\s+/).filter(x=>x.length>1)),bb=new Set(tb.split(/\s+/).filter(x=>x.length>1));
+  const common=[...aa].filter(x=>bb.has(x));
+  const actionA=recallAction(ta),actionB=recallAction(tb);if(actionA!=='none'&&actionB!=='none'&&actionA!==actionB)return false;
+  return common.length>=2||(common.length>=1&&Math.min(aa.size,bb.size)<=2);
+}
+function dedupeSemanticEvents(rows:any[]):any[] {
+  const out:any[]=[];
+  for(const row of rows){const index=out.findIndex(existing=>sameSemanticEvent(existing,row));if(index<0){out.push(row);continue}if(eventCanonicalScore(row)>eventCanonicalScore(out[index]))out[index]=row;}
+  return out;
+}
 
 export function composeRecallAnswer(message:string,results:any[]):{answer:string;confident:boolean;field:RecallAnswerField;sourceId:string} {
   const rows=Array.isArray(results)?results:[];
@@ -111,11 +163,13 @@ export function composeRecallAnswer(message:string,results:any[]):{answer:string
   if(field==='date'){
     const locked=rows.find(row=>row?._sourceLocked===true&&row?.kind==='events'&&row?.start_at);
     if(locked){const when=thaiDate(locked.start_at);if(when)return{answer:`วันที่ ${when}ครับ`,confident:true,field,sourceId:clean(locked.id,200)};}
-    const datedEvents=rows.filter(row=>row?.kind==='events'&&row?.start_at).slice(0,4);
-    const uniqueEvents=datedEvents.filter((row,index,list)=>list.findIndex(other=>thaiDate(other.start_at)===thaiDate(row.start_at)&&clean(other.title,180)===clean(row.title,180))===index);
+    const datedEvents=rows.filter(row=>row?.kind==='events'&&row?.start_at).slice(0,8);
+    const uniqueEvents=dedupeSemanticEvents(datedEvents);
     if(uniqueEvents.length>1){const items=uniqueEvents.map((row:any)=>`• ${clean(row.title,180)} — ${thaiDate(row.start_at)}`).join('\n');return{answer:`มี ${uniqueEvents.length} งานครับ\n${items}`,confident:true,field,sourceId:clean(uniqueEvents[0]?.id,200)};}
     const event=uniqueEvents[0]||firstEvent(rows,row=>Boolean(row?.start_at));
     if(event){const when=thaiDate(event.start_at);if(when)return{answer:`วันที่ ${when}ครับ`,confident:true,field,sourceId:clean(event.id,200)};}
+    const textRow=rows.find(row=>Boolean(thaiDateFromText(`${clean(row?.title,500)} ${rowText(row)}`)));
+    if(textRow){const when=thaiDateFromText(`${clean(textRow?.title,500)} ${rowText(textRow)}`);if(when)return{answer:`วันที่ ${when}ครับ`,confident:true,field,sourceId:clean(textRow.id||textRow.node_id,200)};}
     const task=firstTask(rows,row=>Boolean(row?.due_at));
     if(task){const when=thaiDate(task.due_at);if(when)return{answer:`กำหนดวันที่ ${when}ครับ`,confident:true,field,sourceId:clean(task.id,200)};}
   }

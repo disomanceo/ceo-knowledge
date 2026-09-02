@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from '../src/chat';
+import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAction, recallActionMatches, recallAnswerField, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from '../src/chat';
 
 describe('cloud chat fallback',()=>{
   it('strips Thai recall question tails for Knowledge search',()=>{
@@ -22,6 +22,15 @@ describe('cloud chat fallback',()=>{
     expect(recallAnswerField('ดูภาพยนต์วันไหน')).toBe('date');
     expect(recallAnswerField('ดูภาพยนต์ที่ไหน')).toBe('location');
     expect(recallAnswerField('เริ่มกี่โมง')).toBe('time');
+  });
+  it('keeps action semantics separate from broad PA subject search',()=>{
+    const send={kind:'events',title:'ส่งเล่ม PA ให้สำนักงานเขต',description:'กำหนดส่งเอกสาร PA'};
+    const assess={kind:'events',title:'ประเมิน PA โรงเรียนบางจิก',description:'ตรวจประเมิน PA'};
+    expect(recallSearchQuery('PA ส่งเมื่อไหร่')).toBe('PA');
+    expect(recallAction('PA ส่งเมื่อไหร่')).toBe('send');
+    expect(recallActionMatches('send',send)).toBe(true);
+    expect(recallActionMatches('send',assess)).toBe(false);
+    expect(composeRecallAnswer('PA ส่งเมื่อไหร่',[{id:'m17',kind:'memories',title:'ส่งเล่ม PA',content:'วันที่ 17 กันยายน 2569 ต้องส่งเล่ม PA ให้สำนักงานเขต'}]).answer).toBe('วันที่ 17 กันยายน 2569ครับ');
   });
   it('requires distinctive recall subject terms before composing an answer',()=>{
     const donKhat={kind:'events',title:'วันที่ 17 ก.ย. 2569 ประเมิน โรงเรียนวัดดอนขาด',description:'ประเมิน PA โรงเรียนวัดดอนขาด'};
@@ -76,5 +85,13 @@ describe('cloud chat fallback',()=>{
     ];
     const answer=composeRecallAnswer('งานเกณียณวันไหน',events).answer;
     expect(answer).toContain('มี 2 งาน');expect(answer).toContain('18 กันยายน 2569');expect(answer).toContain('25 กันยายน 2569');
+  });
+  it('collapses duplicate event records that mean the same appointment',()=>{
+    const events=[
+      {id:'b1',kind:'events',title:'ประเมิน PA โรงเรียนบางจิก',description:'ประเมิน PA โรงเรียนบางจิก',start_at:'2026-09-14T02:00:00.000Z',metadata:{}},
+      {id:'b2',kind:'events',title:'วันที่ 14 ก.ย. 2569 ประเมิน โรงเรียนวัดบางจิก',description:'ประเมิน โรงเรียนวัดบางจิก',start_at:'2026-09-14T02:00:00.000Z',metadata:{autoMemory:true},tags:['auto-memory']},
+    ];
+    const answer=composeRecallAnswer('บางจิกล่ะ วันไหน',events).answer;
+    expect(answer).toBe('วันที่ 14 กันยายน 2569ครับ');expect(answer).not.toContain('มี 2 งาน');
   });
 });
