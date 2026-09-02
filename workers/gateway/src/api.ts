@@ -356,7 +356,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V4.0', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'v4-hybrid-semantic-interpreter+evidence-pack+grounding-guard', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V4.1', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'v4-hybrid-semantic-interpreter+evidence-pack+grounding-guard', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -375,7 +375,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
-    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V4.0',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'v4-semantic-interpreter+compact-context+result-set',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V4.1',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'v4-semantic-interpreter+compact-context+result-set',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -584,11 +584,12 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const saveStatusQuestion=/(?:บันทึก|จำ)(?:ไว้|ให้)?(?:แล้ว)?\s*(?:ไหม|หรือยัง|ไว้ยัง|หรือเปล่า|ป่าว|ยัง)\s*$/i.test(message);
       if(saveStatusQuestion&&previousUser){const verify=await searchKnowledge(env,token,previousUser.text,5,recallAnswerField(previousUser.text));const matched=verify.results.filter((row:any)=>recallSubjectMatches(previousUser.text,row));const first=matched[0]||verify.results[0];const sourceId=clean(first?.id||first?.node_id,200);return ok({intent:'remember-status',answer:first?'บันทึกไว้แล้วครับ':'ยังไม่พบว่าข้อความก่อนหน้าถูกบันทึกใน Ceo Knowledge ครับ',mode:'knowledge',provider:'knowledge',ai:false,search:verify,autoMemory:null,context:{conversationId:clean(body.conversationId,200),query:previousUser.text,field:'status',sourceId}});}
       const bareField=isBareRecallFieldQuestion(message);
+      const bareExpansion=/^\s*(?:อะไรบ้าง|มีอะไรบ้าง|ไหนบ้าง)\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/u.test(message);
       const bareSchoolList=/^\s*(?:รร\.?|โรงเรียน)\s*(?:ไหน|อะไร)(?:บ้าง)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(message);
       const listContextQuery=bareSchoolList&&previousUser?`${previousUser.text.replace(/กี่\s*โรงเรียน|จำนวน\s*โรงเรียน|ทั้งหมดกี่\s*โรงเรียน/gi,'').trim()} โรงเรียนไหนบ้าง`:'';
       const legacyContextualQuery=listContextQuery||(bareField&&previousUser?previousUser.text:message);
       const hasDateDiscriminator=/(?:วันที่|วัน)\s*\d{1,2}/u.test(message);
-      const hardTopicSwitch=stateV3.mode==='NEW_TOPIC'&&!bareField&&!hasDateDiscriminator;
+      const hardTopicSwitch=stateV3.mode==='NEW_TOPIC'&&!bareField&&!bareExpansion&&!bareSchoolList&&!hasDateDiscriminator;
       const contextInput=hardTopicSwitch?[]:recentContext;
       const semanticFrame=await interpretSemanticContext(env,message,contextInput,{model:backgroundModel});
       const contextResolution={attempted:semanticFrame.aiRequired,usedAI:semanticFrame.aiUsed,source:semanticFrame.interpreterSource as any,confidence:semanticFrame.confidence,ambiguous:semanticFrame.ambiguous,resolvedQuery:semanticFrame.standaloneQuery,subject:semanticFrame.topic,intent:semanticFrame.intent,answerField:semanticFrame.requestedField,dependsOnPriorContext:semanticFrame.usePriorContext,reason:semanticFrame.reason,clarificationRequired:semanticFrame.aiRequired&&semanticFrame.confidence<0.6};
@@ -608,9 +609,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       const explicitContextField=contextField(message);
       const carriedContextField=explicitContextField!=='general'?explicitContextField:(/(?:วันที่|วัน)\s*\d{1,2}/u.test(message)&&['date','time','location','person','status'].includes(clean(previousResultTurn?.field,40))?clean(previousResultTurn?.field,40) as any:'general');
-      const resultSetReuseAllowed=!hardTopicSwitch&&(bareField||hasDateDiscriminator||['FIELD_FOLLOW_UP','FOLLOW_UP','ENTITY_SWITCH'].includes(stateV3.mode));
+      const resultSetReuseAllowed=!hardTopicSwitch&&(bareField||bareExpansion||bareSchoolList||hasDateDiscriminator||['FIELD_FOLLOW_UP','FOLLOW_UP','ENTITY_SWITCH'].includes(stateV3.mode));
       const selectedContextRef=resultSetReuseAllowed?selectContextResult(message,priorResultSet):null;
-      if(resultSetReuseAllowed&&priorResultSet.length&&carriedContextField!=='general'){
+      if(resultSetReuseAllowed&&priorResultSet.length&&(carriedContextField!=='general'||bareExpansion||bareSchoolList)){
         if(selectedContextRef){
           const contextRows=await loadContextResultRefs(env,token,[selectedContextRef]);
           if(contextRows[0])contextRows[0]._sourceLocked=true;
@@ -621,7 +622,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
           }
           const fieldMessage=carriedContextField==='location'?`${message} ที่ไหน`:carriedContextField==='person'?`${message} ไปกับใคร`:carriedContextField==='time'?`${message} กี่โมง`:carriedContextField==='date'?`${message} วันไหน`:message;
           const contextualAnswer=composeRecallAnswer(fieldMessage,contextRows);          if(contextualAnswer.confident)return ok({intent:'result-set-followup',answer:contextualAnswer.answer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:selectedContextRef.id,resultSet:priorResultSet}});
-        }else if(bareField&&priorResultSet.length>1){
+        }else if((bareField||bareExpansion||bareSchoolList)&&priorResultSet.length>1){
           const contextRows=await loadContextResultRefs(env,token,priorResultSet),listAnswer=contextListAnswer(message,contextRows);
           if(listAnswer)return ok({intent:'result-set-expand',answer:listAnswer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:'',resultSet:priorResultSet}});
         }

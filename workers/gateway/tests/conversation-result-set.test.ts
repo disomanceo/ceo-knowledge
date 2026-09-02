@@ -30,11 +30,13 @@ describe('multi-result conversational state',()=>{
     expect(p2.data.answer).toContain('กัลยาฟ้าใส');expect(p2.data.context.sourceId).toBe('e18');expect(p2.data.context.field).toBe('location');
   });
 
-  it('expands the four-school aggregate result set for a bare where-list follow-up',async()=>{
+  it('expands the four-school aggregate result set for bare expansion and field-list follow-ups',async()=>{
     const rows=[14,15,16,17].map((d,i)=>({id:`pa${d}`,title:`ประเมิน PA โรงเรียนวัด${['บางจิก','ไผ่มุ้ง','ดอนไข่เต่า','ดอนขาด'][i]}`,description:'ประเมิน PA ครู',start_at:`2026-09-${d}T02:00:00Z`,status:'planned',metadata:{}}));
     vi.stubGlobal('fetch',exactEventFetch(Object.fromEntries(rows.map(row=>[row.id,row]))));
-    const resultSet=rows.map(ref);
-    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'ที่ไหนบ้าง',recentContext:[{role:'user',text:'เดือนนี้ประเมิน pa กี่โรงเรียน'},{role:'ceo',text:'เดือนนี้มี 4 โรงเรียนที่ต้องประเมินครับ',query:'เดือนนี้ประเมิน pa',field:'general',resultSet}]})}),env),payload:any=await response.json();
-    expect(payload.data.intent).toBe('result-set-expand');expect(payload.data.answer).toContain('4 แห่ง');expect(payload.data.answer).toContain('บางจิก');expect(payload.data.answer).toContain('ดอนขาด');
+    const resultSet=rows.map(ref),context=[{role:'user',text:'เดือนนี้ประเมิน pa กี่โรงเรียน'},{role:'ceo',text:'เดือนนี้มี 4 โรงเรียนที่ต้องประเมินครับ',query:'เดือนนี้ประเมิน pa',field:'general',resultSet}];
+    for(const [message,checks] of [['อะไรบ้าง',['4 รายการ','บางจิก','ดอนขาด']],['โรงเรียนไหนบ้าง',['4 แห่ง','ไผ่มุ้ง','ดอนไข่เต่า']],['วันไหนบ้าง',['14 กันยายน 2569','17 กันยายน 2569','บางจิก','ดอนขาด']]] as const){
+      const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message,recentContext:context})}),env),payload:any=await response.json();
+      expect(payload.data.intent).toBe('result-set-expand');for(const check of checks)expect(payload.data.answer).toContain(check);
+    }
   });
 });

@@ -24,11 +24,20 @@ export function selectContextResult(message:string,refs:ContextResultRef[]):Cont
   return refs.length===1?refs[0]!:null;
 }
 export function contextField(message:string):RecallAnswerField{return recallAnswerField(message)}
+function thaiShortDate(value:string){const n=Date.parse(value);if(!Number.isFinite(n))return'';return new Intl.DateTimeFormat('th-TH',{timeZone:'Asia/Bangkok',day:'numeric',month:'long',year:'numeric'}).format(new Date(n))}
+function listLabel(ref:ContextResultRef){const school=ref.title.match(/โรงเรียน(?:วัด)?\s*[^–—·,()]+/u)?.[0]?.trim();return clean(school||ref.title.replace(/^(?:ประเมิน\s*PA\s*|ประเมิน\s*)/iu,''),180)}
 export function contextListAnswer(message:string,rows:any[]):string{
-  const field=recallAnswerField(message),source=contextResultSet(rows,20);if(source.length<2)return'';
+  const rawField=recallAnswerField(message),schoolList=/^\s*(?:รร\.?|โรงเรียน)\s*(?:ไหน|อะไร)(?:บ้าง)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/iu.test(clean(message,500)),field=schoolList?'location':rawField,source=contextResultSet(rows,20);if(source.length<2)return'';
   if(field==='location'){
-    const labels=source.map(ref=>{const school=ref.title.match(/โรงเรียน(?:วัด)?\s*[^–—·,()]+/u)?.[0]?.trim();return clean(ref.location||school||ref.title.replace(/^(?:ประเมิน\s*PA\s*|ประเมิน\s*)/iu,''),180)}).filter(Boolean);
-    const unique=[...new Set(labels)];if(unique.length)return`มี ${unique.length} แห่งครับ: ${unique.join(', ')}`;
+    const labels=source.map(ref=>clean(ref.location||listLabel(ref),180)).filter(Boolean),unique=[...new Set(labels)];
+    if(unique.length)return`มี ${unique.length} แห่งครับ: ${unique.join(', ')}`;
+  }
+  if(field==='date'){
+    const items=source.map(ref=>{const date=thaiShortDate(ref.startAt||ref.dueAt||'');return date?`${listLabel(ref)} — ${date}`:''}).filter(Boolean);
+    if(items.length)return items.join('\n');
+  }
+  if(field==='general'&&/(?:อะไรบ้าง|มีอะไรบ้าง|ไหนบ้าง)\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/u.test(clean(message,500))){
+    const labels=[...new Set(source.map(listLabel).filter(Boolean))];if(labels.length)return`มี ${labels.length} รายการครับ: ${labels.join(', ')}`;
   }
   return'';
 }
