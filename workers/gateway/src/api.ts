@@ -89,7 +89,7 @@ async function temporalKnowledge(env: Env, token: string, intent: TimeIntent) {
   const uniq=(rows:any[])=>{const seen=new Set<string>();return rows.filter(row=>{const key=clean(row.id||row.title||row.content,500).toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true})};
   return dedupeTemporalKnowledge({events:uniq(events),tasks:uniq(tasks),memories});
 }
-async function searchKnowledge(env: Env, token: string, query: string, limit = 10, answerField = recallAnswerField(query)) {
+async function searchKnowledge(env: Env, token: string, query: string, limit = 10, answerField = recallAnswerField(query), preferredSourceId = '') {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
   const recallTerms = [...new Set(recallQ.split(/\s+/).filter(Boolean).flatMap(token => token.length >= 6 ? [token, token.slice(0, -1)] : [token]))].join(' ');
@@ -97,7 +97,7 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   const specs = [
     ['memories', ['title', 'content'], 'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at'],
     ['decisions', ['title', 'content', 'rationale'], 'id,title,content,rationale,importance,status,tags,decided_at,created_at,updated_at'],
-    ['conversation_summaries', ['title', 'summary'], 'id,title,summary,decisions,open_loops,facts,status,created_at,updated_at'],
+    ['conversation_summaries', ['title', 'summary'], 'id,title,summary,decisions,open_loops,facts,status,metadata,created_at,updated_at'],
     ['knowledge_entries', ['title', 'summary', 'content'], 'id,title,summary,content,knowledge_type,topic,importance,confidence,status,tags,created_at,updated_at'],
   ] as const;
   const rows: any[] = [];
@@ -115,7 +115,7 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   rows.push(...eventRows.map(row => ({ ...row, kind:'events', content:clean([row.description,row.location,row.start_at].filter(Boolean).join(' · '),5000), importance:2, updated_at:row.updated_at || row.start_at || row.created_at })));
   rows.push(...taskRows.map(row => ({ ...row, kind:'tasks', content:clean([row.description,row.waiting_for,row.due_at].filter(Boolean).join(' · '),5000), importance:2 })));
   const replicaOr = recallTerms ? searchOr(['title','content'], recallTerms) : '';
-  const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,tier,retention_policy,metadata,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
+  const replicaRows = await rest<any[]>(env, token, `memory_nodes${qs({ select:'node_id,title,content,memory_kind,importance,project_ref,source_refs,evidence_status,reference_path,tier,retention_policy,source_kind,truth_status,metadata,created_at,updated_at', node_type:'eq.memory', ...(replicaOr ? { or:replicaOr } : {}), order:'updated_at.desc', limit:perTable })}`).catch(() => []);
   const mirroredLegacyIds = new Set(replicaRows.flatMap(row => Array.isArray(row.source_refs) ? row.source_refs : []));
   const legacyOnly = rows.filter(row => !mirroredLegacyIds.has(String(row.id || '')) && !(row.kind === 'memories' && memoryLooksLikeQuestion(row)));
   rows.length = 0;
@@ -134,9 +134,19 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
       : answerField==='time' ? (row.kind==='events'&&row.start_at?70:row.kind==='tasks'&&row.due_at?55:0)
       : answerField==='status' ? ((row.kind==='tasks'||row.kind==='events')&&row.status?55:0)
       : 0;
+    const asksRestaurant=answerField==='location'&&/(?:ร้านอาหาร|ร้านไหน|ร้านอะไร)/i.test(q);
+    const restaurantTypeBoost=asksRestaurant?(hay.includes('ร้านอาหาร')||/(?:ร้าน)[^\s]{0,40}/i.test(hay)?60:(row.kind==='events'&&clean(row.location,300)?-50:0)):0;
     const memoryMeta=row?.metadata&&typeof row.metadata==='object'?row.metadata:{};
     const governanceBoost=row.kind==='memory_nodes'?((memoryMeta.canonical===true?45:0)+(row.tier==='pinned'?35:row.tier==='hot'?12:row.tier==='warm'?6:row.tier==='cold'?-4:0)+(row.retention_policy==='permanent'?18:0)):0;
-    return { ...row, _score: Math.round((hits + importance + recency + structuredBoost + governanceBoost) * 100) / 100 };
+    const isAuto=memoryMeta.autoMemory===true||(Array.isArray(row.tags)&&row.tags.includes('auto-memory'));
+    const sourceAuthority=row.kind==='events'?(isAuto?(memoryMeta.pinned===true?20:-35):80)
+      : row.kind==='tasks'?(isAuto?(memoryMeta.pinned===true?18:-25):65)
+      : row.kind==='conversation_summaries'?(isAuto?-45:-10)
+      : row.kind==='memory_nodes'?(row.source_kind==='user'?40:isAuto?-25:10)
+      : row.kind==='memories'?(Array.isArray(row.tags)&&row.tags.includes('pinned')?45:20)
+      : 0;
+    const sourceLock=preferredSourceId&&String(row.id||row.node_id||'')===preferredSourceId?180:0;
+    return { ...row, _sourceLocked:sourceLock>0, _score: Math.round((hits + importance + recency + structuredBoost + restaurantTypeBoost + governanceBoost + sourceAuthority + sourceLock) * 100) / 100 };
   }).sort((a, b) => b._score - a._score).slice(0, limit);
   return { query: q, count: ranked.length, results: ranked };
 }
@@ -225,7 +235,7 @@ async function maybeLlm(env: Env, prompt: string, context: unknown): Promise<str
         model,
         messages: [
           { role: 'system', content: 'You are Ceo, a concise Thai secretary. Answer only from supplied Ceo Knowledge context. If context is insufficient, say so. Never invent appointments, tasks, people, or decisions.' },
-          { role: 'user', content: `เธเธณเธ–เธฒเธก: ${prompt}\n\nCeo Knowledge context:\n${JSON.stringify(context).slice(0, 16000)}` },
+          { role: 'user', content: `คำถาม: ${prompt}\n\nCeo Knowledge context:\n${JSON.stringify(context).slice(0, 16000)}` },
         ],
       }),
     });
@@ -468,11 +478,14 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/search' && request.method === 'GET') return ok(await searchKnowledge(env, token, clean(url.searchParams.get('q'), 240), safeLimit(url.searchParams.get('limit'), 10, 30)));
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
-      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string}> }>(request), message = clean(body.message, 4000);
+      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string;sourceId?:string;query?:string}> }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
-      const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000)})).filter(item=>item.text);
+      const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000),sourceId:clean(item?.sourceId,200),query:clean(item?.query,1000)})).filter(item=>item.text);
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
-      const contextualQuery=isBareRecallFieldQuestion(message)&&previousUser?previousUser.text:message;
+      const previousSource=[...recentContext].reverse().find(item=>item.role==='ceo'&&item.sourceId);
+      const bareField=isBareRecallFieldQuestion(message);
+      const contextualQuery=bareField&&previousUser?previousUser.text:message;
+      const preferredSourceId=bareField?clean(previousSource?.sourceId,200):'';
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
       const intent = detectChatIntent(message);
       if (intent.kind === 'live') {
@@ -532,7 +545,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         return ok({ intent: 'tasks', answer:composeTaskAnswer(tasks), tasks, autoMemory, mode:'knowledge', provider:'knowledge' });
       }
       const answerField=recallAnswerField(message);
-      const search = await searchKnowledge(env, token, contextualQuery, 8, answerField);
+      const search = await searchKnowledge(env, token, contextualQuery, 8, answerField, preferredSourceId);
       const directAnswer=composeRecallAnswer(message,search.results);
       const fallbackAnswer = directAnswer.answer || cloudChatFallback(message, search.results);
       if(intent.kind==='recall'&&directAnswer.confident){
@@ -616,7 +629,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok(filterActiveKnowledgeGraph({ nodes, links: links.map(link=>({ ...link, weight:Number(link.weight||0) })) }));
     }
 
-    return fail('NOT_FOUND', 'เนเธกเนเธเธ API เธ—เธตเนเธฃเนเธญเธเธเธญ', 404);
+    return fail('NOT_FOUND', 'ไม่พบ API ที่ร้องขอ', 404);
   } catch (error: any) {
     const status = Number(error?.status) || (/AUTH/i.test(String(error?.message)) ? 401 : 400);
     const message = clean(error?.message || error || 'REQUEST_FAILED', 1000);

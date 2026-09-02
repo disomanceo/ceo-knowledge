@@ -532,6 +532,19 @@ async function findSimilarEvent(env:Env,token:string,decision:AutoMemoryDecision
   return rows.filter(row=>row?.status!=='cancelled'&&Date.parse(String(row?.start_at||''))<=Date.parse(to)).map(row=>({row,similarity:Math.max(scheduleTextSimilarity(source,`${row?.title||''} ${row?.description||''}`),scheduleTextSimilarity(decision.title,row?.title))})).sort((a,b)=>b.similarity-a.similarity).find(item=>item.similarity>=.72)?.row||null;
 }
 
+async function findAuthoritativeEventCollision(env:Env,token:string,decision:AutoMemoryDecision){
+  if(!decision.eventAt||decision.explicit)return null;
+  const p=bangkokDateParts(new Date(decision.eventAt)),from=bangkokIso(p.year,p.month,p.day,0,0);if(!from)return null;
+  const to=new Date(Date.parse(from)+86400000-1).toISOString(),q=new URLSearchParams();
+  q.set('select','*');q.set('start_at',`gte.${from}`);q.set('order','start_at.asc');q.set('limit','50');
+  const rows=await rest<any[]>(env,token,`events?${q.toString()}`).catch(()=>[]),source=`${decision.title} ${decision.content}`;
+  const candidates=rows.filter(row=>row?.status!=='cancelled'&&Date.parse(String(row?.start_at||''))<=Date.parse(to)&&row?.metadata?.autoMemory!==true&&!(Array.isArray(row?.tags)&&row.tags.includes('auto-memory'))).map(row=>{
+    const similarity=Math.max(scheduleTextSimilarity(source,`${row?.title||''} ${row?.description||''}`),scheduleTextSimilarity(decision.title,row?.title));
+    const gap=Math.abs(Date.parse(String(row?.start_at||''))-Date.parse(decision.eventAt||''));
+    return{row,similarity,gap};
+  }).filter(item=>(item.gap<=3*60*60*1000&&item.similarity>=.38)||item.similarity>=.62).sort((a,b)=>b.similarity-a.similarity||a.gap-b.gap);
+  return candidates[0]||null;
+}
 function domainMetadata(input: AutoMemoryInput, decision: AutoMemoryDecision, source: string, conversationKey: string, captureFingerprint: string) {
   return { autoMemory: true, pinned: decision.explicit, retention: decision.retention, projectRef: clean(input.projectId, 160), source, sourceRef: clean(input.sourceRef, 500), conversationKey, score: decision.score, captureFingerprint };
 }
@@ -623,6 +636,11 @@ export async function autoCapture(env: Env, token: string, input: AutoMemoryInpu
   const conversationKey = clean(input.conversationId || input.conversationKey, 200) || `${source}:${captureFingerprint.slice(0, 32)}`;
 
   if (input.dryRun) return { decision, written: null, archive: null, duplicate: false, conversationKey, captureFingerprint };
+  const authoritativeCollision=decision.kind==='event'&&!decision.explicit?await findAuthoritativeEventCollision(env,token,decision):null;
+  if(authoritativeCollision){
+    const protectedDecision={...decision,retention:'consolidation' as AutoMemoryRetention,needsConfirmation:true};
+    return { decision:protectedDecision, written:null, archive:null, duplicate:true, conversationKey, captureFingerprint, conflict:{type:'authoritative_event_exists',existingId:String(authoritativeCollision.row?.id||''),similarity:Math.round(Number(authoritativeCollision.similarity||0)*1000)/1000} };
+  }
 
   let archive: any = null, duplicate = false;
   if (input.archive !== false && !decision.blocked && (clean(input.conversationSummary, 6000) || decision.retention !== 'none')) {

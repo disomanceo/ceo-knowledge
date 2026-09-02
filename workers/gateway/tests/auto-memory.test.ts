@@ -137,6 +137,15 @@ describe('Ceo Knowledge Auto Memory classifier',()=>{
 
 describe('Ceo Knowledge Auto Memory central API',()=>{
   afterEach(()=>vi.unstubAllGlobals());
+  it('does not promote a non-explicit conflicting event over an existing manual event',async()=>{
+    const calls:any[]=[];
+    vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=decodeURIComponent(String(input)),method=String(init.method||'GET').toUpperCase();calls.push({url,method});
+      if(url.includes('/rest/v1/events?')&&method==='GET')return json([{id:'manual-retire',title:'งานเลี้ยงเกษียณ ผอ. เผือก',description:'18 ก.ย. 2569 เวลา 17.00 น. สถานที่ร้านอาหารยังไม่ระบุ',start_at:'2026-09-18T10:00:00Z',status:'planned',metadata:{},tags:[]}]);
+      throw new Error('unexpected '+method+' '+url);
+    });
+    const result=await autoCapture(env,'user-token',{message:'18 ก.ย. 2569 เวลา 17.00 น. มีงานเลี้ยงเกษียณ ผอ. เผือก ที่ร้านอาหารกัลยาฟ้าใส',source:'mobile',conversationId:'mobile:retire-conflict'});
+    expect(result.decision.kind).toBe('event');expect(result.decision.explicit).toBe(false);expect(result.decision.needsConfirmation).toBe(true);expect(result.written).toBeNull();expect(result.archive).toBeNull();expect(result.conflict?.type).toBe('authoritative_event_exists');expect(result.conflict?.existingId).toBe('manual-retire');expect(calls.some(x=>x.method==='POST')).toBe(false);
+  });
 
   it('archives and writes a high-confidence event through one authenticated endpoint',async()=>{
     const calls:any[]=[];

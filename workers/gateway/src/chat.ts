@@ -9,9 +9,9 @@ function stripMemoryPrefix(value:unknown):string {
 
 export function recallAnswerField(message:string):RecallAnswerField {
   const text=clean(message,4000);
-  if(/(?:ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'location';
+  if(/(?:ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|ร้าน(?:อาหาร)?(?:ไหน|อะไร)|กินเลี้ยงที่ไหน)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'location';
   if(/(?:กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'time';
-  if(/(?:วันไหน|วันอะไร|เมื่อไร|เมื่อไหร่)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'date';
+  if(/(?:วันไหน|วันอะไร|วันที่(?:เท่าไร|อะไร)|เมื่อไร|เมื่อไหร่)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'date';
   if(/(?:ใคร|ใครบ้าง|กับใคร|พาใคร|ผู้เกี่ยวข้อง(?:มี)?ใครบ้าง)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'person';
   if(/(?:สถานะ(?:อะไร)?|เสร็จหรือยัง|เรียบร้อยหรือยัง|ทำถึงไหน|เป็นยังไงบ้าง)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'status';
   return'general';
@@ -20,7 +20,7 @@ export function recallAnswerField(message:string):RecallAnswerField {
 export function recallSubjectQuery(message:string):string {
   const text=normalizeThaiRecall(clean(message,4000)).replace(/[?？]/g,' ');
   return text
-    .replace(/\s*(?:อะไรบ้าง|อะไร|ใครบ้าง|ใคร|ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|วันไหน|วันอะไร|เมื่อไร|เมื่อไหร่|กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร|สถานะ(?:อะไร)?|เสร็จหรือยัง|เรียบร้อยหรือยัง|ทำถึงไหน|เป็นยังไงบ้าง)(?:บ้าง)?\s*(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i,'')
+    .replace(/\s*(?:อะไรบ้าง|อะไร|ใครบ้าง|ใคร|ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|ร้าน(?:อาหาร)?(?:ไหน|อะไร)|กินเลี้ยงที่ไหน|วันไหน|วันอะไร|วันที่(?:เท่าไร|อะไร)|เมื่อไร|เมื่อไหร่|กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร|สถานะ(?:อะไร)?|เสร็จหรือยัง|เรียบร้อยหรือยัง|ทำถึงไหน|เป็นยังไงบ้าง)(?:บ้าง)?\s*(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i,'')
     .replace(/\s*(?:จัด(?:งาน|ขึ้น)?|เริ่ม(?:งาน)?|มี(?:งาน)?|นัด(?:หมาย)?|(?:ต้อง)?ส่ง|กำหนด|เกิด(?:ขึ้น)?)\s*$/i,'')
     .replace(/^(?:แล้ว|แล้วก็|แล้วมัน|แล้วอันนั้น|อันนั้น|เรื่องนั้น|มัน)\s*/i,'')
     .replace(/^(?:จัดงาน|จัด|เริ่มงาน|เริ่ม|มีงาน|มี|นัดหมาย|นัด|กำหนด)\s*/i,'')
@@ -58,6 +58,7 @@ function rowText(row:any):string {
 }
 function firstEvent(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='events'&&predicate(row));}
 function firstTask(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='tasks'&&predicate(row));}
+function isAutoMemoryRow(row:any){return row?.metadata?.autoMemory===true||(Array.isArray(row?.tags)&&row.tags.includes('auto-memory'));}
 
 export function composeRecallAnswer(message:string,results:any[]):{answer:string;confident:boolean;field:RecallAnswerField;sourceId:string} {
   const rows=Array.isArray(results)?results:[];
@@ -65,10 +66,23 @@ export function composeRecallAnswer(message:string,results:any[]):{answer:string
   if(!rows.length)return{answer:'',confident:false,field,sourceId:''};
 
   if(field==='location'){
+    const manualEvent=firstEvent(rows,row=>!isAutoMemoryRow(row));
+    if(manualEvent){
+      const location=clean(manualEvent?.location,500);
+      if(location)return{answer:`ที่ ${location}ครับ`,confident:true,field,sourceId:clean(manualEvent.id,200)};
+      const text=`${clean(manualEvent?.title,500)} ${clean(manualEvent?.description,2000)} ${rowText(manualEvent)}`;
+      const unknown=/(?:สถานที่|ร้านอาหาร|ร้าน)[^\n]{0,80}(?:ยังไม่ระบุ|ยังไม่ได้ระบุ|ยังไม่ได้กำหนด|ไม่ระบุ|จะแจ้งภายหลัง)|(?:ยังไม่ระบุ|ยังไม่ได้กำหนด)[^\n]{0,80}(?:สถานที่|ร้านอาหาร|ร้าน)/i.test(text);
+      if(unknown){
+        const hasAutoConflict=rows.some(row=>row?.kind==='events'&&isAutoMemoryRow(row)&&!/(?:ยังไม่ระบุ|ยังไม่ได้กำหนด|จะแจ้งภายหลัง)/i.test(`${clean(row?.title,500)} ${clean(row?.description,2000)} ${rowText(row)}`));
+        return{answer:hasAutoConflict?'ข้อมูลที่ยืนยันไว้ระบุว่ายังไม่ได้กำหนดร้านอาหารครับ พบ Auto Memory อีกชุดที่ขัดแย้ง จึงไม่นำข้อมูลชุดนั้นมาใช้':'สถานที่ร้านอาหารยังไม่ระบุครับ',confident:true,field,sourceId:clean(manualEvent.id,200)};
+      }
+    }
     const event=firstEvent(rows,row=>Boolean(clean(row?.location,500)));
     if(event)return{answer:`ที่ ${clean(event.location,500)}ครับ`,confident:true,field,sourceId:clean(event.id,200)};
   }
   if(field==='date'){
+    const locked=rows.find(row=>row?._sourceLocked===true&&row?.kind==='events'&&row?.start_at);
+    if(locked){const when=thaiDate(locked.start_at);if(when)return{answer:`วันที่ ${when}ครับ`,confident:true,field,sourceId:clean(locked.id,200)};}
     const datedEvents=rows.filter(row=>row?.kind==='events'&&row?.start_at).slice(0,4);
     const uniqueEvents=datedEvents.filter((row,index,list)=>list.findIndex(other=>thaiDate(other.start_at)===thaiDate(row.start_at)&&clean(other.title,180)===clean(row.title,180))===index);
     if(uniqueEvents.length>1){const items=uniqueEvents.map((row:any)=>`• ${clean(row.title,180)} — ${thaiDate(row.start_at)}`).join('\n');return{answer:`มี ${uniqueEvents.length} งานครับ\n${items}`,confident:true,field,sourceId:clean(uniqueEvents[0]?.id,200)};}

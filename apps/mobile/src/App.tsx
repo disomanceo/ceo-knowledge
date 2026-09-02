@@ -16,7 +16,7 @@ import ResearchPage from './ResearchPage';
 import { chooseVoice, loadVoicePreferences, normalizeSpeechText, saveVoicePreferences, speechSynthesisSupported, speechTextForMode, splitSpeechText, type VoiceMode, type VoicePreferences } from './voice';
 
 type Tab = 'console' | 'chat' | 'today' | 'memory' | 'tasks' | 'graph' | 'drive' | 'devices' | 'approvals' | 'claims' | 'research';
-type ChatItem = { role: 'user' | 'ceo'; text: string; meta?: string; at?: number };
+type ChatItem = { role: 'user' | 'ceo'; text: string; meta?: string; at?: number; context?: { sourceId?: string; query?: string; field?: string } };
 
 async function waitForRuntimeJob(id: string, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
@@ -74,6 +74,7 @@ function ChatPage() {
   const [newBelow,setNewBelow]=useState(false);
   const [voicePrefs,setVoicePrefs]=useState<VoicePreferences>(()=>loadVoicePreferences());
   const [voiceState,setVoiceState]=useState<'ready'|'speaking'|'error'|'unsupported'>(()=>speechSynthesisSupported()?'ready':'unsupported');
+  const [voiceMenuOpen,setVoiceMenuOpen]=useState(false);
   const listRef=useRef<HTMLDivElement>(null);
   const voicePrefsRef=useRef<VoicePreferences>(voicePrefs);
   const voiceSequenceRef=useRef(0);
@@ -91,12 +92,12 @@ function ChatPage() {
     for(const chunk of chunks){const utterance=new SpeechSynthesisUtterance(chunk);utterance.lang=prefs.lang;utterance.rate=prefs.rate;utterance.pitch=prefs.pitch;utterance.volume=prefs.volume;if(selected)utterance.voice=selected as SpeechSynthesisVoice;utterance.onend=()=>{finished+=1;if(sequence===voiceSequenceRef.current&&finished>=chunks.length)setVoiceState('ready')};utterance.onerror=(event:any)=>{const reason=String(event?.error||'');if(sequence!==voiceSequenceRef.current||reason==='interrupted'||reason==='canceled')return;setVoiceState('error')};synth.speak(utterance)}
     try{sessionStorage.setItem('ceo-voice-activated-v1','1')}catch{}return true;
   };
-  const setVoiceMode=(mode:VoiceMode)=>{if(mode==='off')stopVoice();setVoicePrefs(v=>({...v,mode}))};
-  const appendCeo=(text:string,meta:string,autoSpeak=true)=>{const item={role:'ceo' as const,text,meta,at:Date.now()};setItems(v=>[...v,item]);const mode=voicePrefsRef.current.mode;if(autoSpeak&&(mode==='auto'||mode==='smart'))setTimeout(()=>speakDevice(text,false),0)};
+  const setVoiceMode=(mode:VoiceMode)=>{if(mode==='off')stopVoice();setVoicePrefs(v=>({...v,mode}));setVoiceMenuOpen(false)};
+  const appendCeo=(text:string,meta:string,autoSpeak=true,context?:ChatItem['context'])=>{const item:ChatItem={role:'ceo',text,meta,at:Date.now(),...(context?{context}:{})};setItems(v=>[...v,item]);const mode=voicePrefsRef.current.mode;if(autoSpeak&&(mode==='auto'||mode==='smart'))setTimeout(()=>speakDevice(text,false),0)};
   const clearLog=()=>{if(!window.confirm('เคลียร์ประวัติแชตในอุปกรณ์นี้?'))return;stopVoice();const id='mobile:'+crypto.randomUUID();setConversationId(id);try{localStorage.setItem(CHAT_ID_KEY,id);localStorage.removeItem(CHAT_LOG_KEY)}catch{}setItems([{...greeting,at:Date.now()}]);setProvider('AUTO · READY');setFollowLatest(true);setNewBelow(false)};
   async function send() {
     const text=message.trim();if(!text||busy)return;
-    const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text}));
+    const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text,sourceId:item.context?.sourceId,query:item.context?.query}));
     setMessage('');setItems(v=>[...v,{role:'user',text,at:Date.now()}]);setBusy(true);setThinking('Ceo กำลังค้น Knowledge…');setFollowLatest(true);setNewBelow(false);
     try {
       const r=await api.chat(text,conversationId,recentContext);
@@ -112,7 +113,7 @@ function ChatPage() {
         else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'OLLAMA_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE FALLBACK');appendCeo(fallback,'KNOWLEDGE FALLBACK · '+reason);}
       } else {
         const mode=String(r?.mode||r?.intent||'knowledge'),cloudProvider=String(r?.provider||'AI').toUpperCase(),cloudModel=String(r?.model||'').trim(),grounded=r?.grounded===true;
-        const cloudLabel=['CLOUD',cloudProvider,cloudModel,grounded?'SEARCH':''].filter(Boolean).join(' · '),label=mode==='cloud-ai'?cloudLabel:mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';setProvider(label);appendCeo(r.answer||'เรียบร้อยครับ',label.replace('AUTO · ',''));
+        const cloudLabel=['CLOUD',cloudProvider,cloudModel,grounded?'SEARCH':''].filter(Boolean).join(' · '),label=mode==='cloud-ai'?cloudLabel:mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';setProvider(label);appendCeo(r.answer||'เรียบร้อยครับ',label.replace('AUTO · ',''),true,r?.context);
       }
     } catch(e:any){setProvider('AUTO · ERROR');appendCeo('เกิดข้อผิดพลาด: '+String(e?.message||e),'ERROR');}
     finally{setBusy(false);setThinking('Ceo กำลังค้นความจำ…')}
@@ -120,16 +121,15 @@ function ChatPage() {
   const voiceStatus=voiceState==='unsupported'?'ไม่รองรับ':voiceState==='speaking'?'กำลังพูด':voiceState==='error'?'ลองกดทดสอบ':'พร้อม';
   return <div className="chat-shell flex flex-col min-h-0">
     <div className="flex items-center justify-between gap-3 pb-3"><div><div className="font-semibold">Ceo Chat / Auto Router</div><div className="muted text-[11px]">Knowledge ก่อน · AI เมื่อจำเป็น · เก็บ Chat Log ในอุปกรณ์</div></div><div className="flex items-center gap-2"><span className="badge">{provider}</span><button className="badge" onClick={clearLog}>เคลียร์ Log</button></div></div>
-    <div className="voice-toolbar">
-      <div className="voice-toolbar-top"><div className="voice-device-status">{voicePrefs.mode==='off'?<VolumeX size={15}/>:<Volume2 size={15}/>}<b>VOICE</b><span>{voiceStatus} · DEVICE TTS</span></div><div className="voice-mode-tabs">{(['off','manual','auto','smart'] as VoiceMode[]).map(mode=><button key={mode} className={voicePrefs.mode===mode?'active':''} onClick={()=>setVoiceMode(mode)}>{mode.toUpperCase()}</button>)}</div></div>
-      <div className="voice-toolbar-bottom"><span>{voiceState==='unsupported'?'อุปกรณ์/เบราว์เซอร์นี้ไม่มีระบบอ่านข้อความ':voicePrefs.mode==='off'?'ปิดเสียงทั้งหมด':voicePrefs.mode==='manual'?'กด 🔊 ที่คำตอบที่ต้องการฟัง':voicePrefs.mode==='auto'?'คำตอบใหม่จะพูดอัตโนมัติ · iPhone/iPad ครั้งแรกกดทดสอบเสียง':'SMART จะย่อข้อความยาว/เทคนิคก่อนพูด · iPhone/iPad ครั้งแรกกดทดสอบเสียง'}</span><div className="voice-toolbar-actions">{voicePrefs.mode!=='off'&&<button onClick={()=>speakDevice('ซีอีโอพร้อมพูดแล้วครับ',true)} disabled={voiceState==='unsupported'}><Volume2 size={13}/>ทดสอบเสียง</button>}<button onClick={stopVoice} disabled={voiceState!=='speaking'}><Square size={12}/>หยุด</button></div></div>
-    </div>
     <div ref={listRef} onScroll={e=>{const el=e.currentTarget,near=el.scrollHeight-el.scrollTop-el.clientHeight<90;setFollowLatest(near);if(near)setNewBelow(false)}} className="chat-log flex-1 min-h-0 overflow-auto space-y-3 pr-1">
-      {items.map((item,i)=><div key={(item.at||i)+'-'+i} className={'chat-bubble '+(item.role==='user'?'chat-user':'chat-ceo')}>{item.role==='ceo'?<><div><span className="chat-ceo-name">Ceo : </span>{item.text}</div>{item.meta&&<div className="chat-meta">{item.meta}</div>}{voicePrefs.mode!=='off'&&<div className="chat-voice-actions"><button onClick={()=>speakDevice(item.text,true)} disabled={voiceState==='unsupported'}><Volume2 size={13}/>ฟัง</button>{voiceState==='speaking'&&<button onClick={stopVoice}><Square size={11}/>หยุด</button>}</div>}</>:item.text}</div>)}
+      {items.map((item,i)=><div key={(item.at||i)+'-'+i} className={'chat-bubble '+(item.role==='user'?'chat-user':'chat-ceo')}>{item.role==='ceo'?<><div><span className="chat-ceo-name">Ceo : </span>{item.text}</div>{item.meta&&<div className="chat-meta">{item.meta}</div>}{voicePrefs.mode!=='off'&&<div className="chat-voice-actions"><button className="voice-inline" title="ฟังคำตอบ" aria-label="ฟังคำตอบ" onClick={()=>speakDevice(item.text,true)} disabled={voiceState==='unsupported'}><Volume2 size={14}/></button>{voiceState==='speaking'&&<button className="voice-inline" title="หยุดเสียง" aria-label="หยุดเสียง" onClick={stopVoice}><Square size={12}/></button>}</div>}</>:item.text}</div>)}
       {busy&&<div className="chat-bubble chat-ceo muted"><span className="chat-ceo-name">Ceo : </span>{thinking}</div>}
     </div>
     {newBelow&&<button className="chat-jump-latest" onClick={jumpLatest}>↓ ข้อความล่าสุด</button>}
-    <div className="chat-composer pt-3 flex gap-2"><input className="input" value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>e.key==='Enter'&&void send()} placeholder="พิมพ์ถาม Ceo…"/><button className="btn btn-primary px-4" onClick={()=>void send()} disabled={busy||!message.trim()}><MessageSquareText size={20}/></button></div>
+    <div className="chat-composer pt-3">
+      {voiceMenuOpen&&<div className="voice-popover"><div className="voice-popover-head"><div><b>Voice</b><span>{voiceStatus} · DEVICE TTS</span></div><button className="voice-popover-close" aria-label="ปิดเมนูเสียง" onClick={()=>setVoiceMenuOpen(false)}>×</button></div><div className="voice-mode-grid">{([['off','ปิด'],['manual','กดฟัง'],['auto','อัตโนมัติ'],['smart','Smart']] as [VoiceMode,string][]).map(([mode,label])=><button key={mode} className={'voice-mode-option '+(voicePrefs.mode===mode?'active':'')} onClick={()=>setVoiceMode(mode)}>{label}</button>)}</div><div className="voice-popover-note">{voiceState==='unsupported'?'อุปกรณ์/เบราว์เซอร์นี้ไม่รองรับระบบอ่านข้อความ':voicePrefs.mode==='off'?'ปิดเสียงทั้งหมด':voicePrefs.mode==='manual'?'แตะไอคอนลำโพงในคำตอบเพื่อฟัง':voicePrefs.mode==='auto'?'คำตอบใหม่จะพูดอัตโนมัติ':'Smart จะย่อข้อความยาวก่อนพูด'}</div><div className="voice-popover-actions"><button onClick={()=>speakDevice('ซีอีโอพร้อมพูดแล้วครับ',true)} disabled={voiceState==='unsupported'}><Volume2 size={14}/>ทดสอบ</button>{voiceState==='speaking'&&<button onClick={stopVoice}><Square size={12}/>หยุด</button>}</div></div>}
+      <div className="chat-composer-row"><input className="input" value={message} onChange={e=>setMessage(e.target.value)} onKeyDown={e=>e.key==='Enter'&&void send()} placeholder="พิมพ์ถาม Ceo…"/><button className={'btn voice-trigger '+(voicePrefs.mode!=='off'?'voice-on':'')} title="ตั้งค่า Voice" aria-label="ตั้งค่า Voice" aria-expanded={voiceMenuOpen} onClick={()=>setVoiceMenuOpen(v=>!v)}>{voicePrefs.mode==='off'?<VolumeX size={20}/>:<Volume2 size={20}/>}<span className="voice-dot"/></button><button className="btn btn-primary send-trigger" aria-label="ส่งข้อความ" onClick={()=>void send()} disabled={busy||!message.trim()}><MessageSquareText size={20}/></button></div>
+    </div>
   </div>;
 }
 function TodayPage() {

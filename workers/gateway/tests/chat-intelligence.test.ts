@@ -1,11 +1,13 @@
 import { describe,expect,it } from 'vitest';
 import { composeDateAnswer,composeTemporalAnswer,dateTextMatchesIntent,detectChatIntent,extractTemporalTopic,isLiveExternalQuery,isQuestionLike,memoryLooksLikeQuestion,parseDateIntent,parseTemporalIntent,temporalTextMatchesIntent } from '../src/chat-intelligence';
+import { isBareRecallFieldQuestion, recallAnswerField } from '../src/chat';
 const now=new Date('2026-09-01T04:40:00.000Z');
 describe('chat intelligence',()=>{
  it('recognizes Thai question without question mark',()=>{expect(isQuestionLike('วันที่ 18 มีอะไรไหม')).toBe(true);expect(isQuestionLike('ดูภาพยนต์วันไหน')).toBe(true);expect(memoryLooksLikeQuestion({content:'Memory: วันที่ 18 มีอะไรไหม'})).toBe(true)});
  it('resolves day-only date to current/upcoming Bangkok month',()=>{const x=parseDateIntent('วันที่ 18 มีอะไรไหม',now)!;expect(x.from).toBe('2026-09-17T17:00:00.000Z');expect(x.to).toBe('2026-09-18T16:59:59.999Z')});
  it('resolves explicit Thai Buddhist date',()=>{const x=parseDateIntent('18 ก.ย. 2569 มีอะไร',now)!;expect(x.year).toBe(2026);expect(x.month).toBe(9);expect(x.day).toBe(18)});
  it('routes date before generic recall',()=>{expect(detectChatIntent('วันที่ 18 มีอะไรไหม',now).kind).toBe('date');expect(detectChatIntent('งานค้างมีอะไรบ้าง',now).kind).toBe('tasks')});
+ it('recognizes venue and bare date follow-up fields',()=>{expect(recallAnswerField('กินเลี้ยงเกษียณ ผอ.เผือก ร้านอาหารอะไร')).toBe('location');expect(recallAnswerField('วันที่เท่าไร')).toBe('date');expect(isBareRecallFieldQuestion('วันที่เท่าไร')).toBe(true)});
  it('routes current market questions to LIVE before calendar parsing',()=>{expect(isLiveExternalQuery('หุ้นวันนี้ตัวไหนน่าสนใจ')).toBe(true);expect(detectChatIntent('หุ้นวันนี้ตัวไหนน่าสนใจ',now).kind).toBe('live');expect(detectChatIntent('วันนี้มีงานอะไรบ้าง',now).kind).not.toBe('live')});
  it('routes live external lookup commands even without an explicit freshness word',()=>{expect(isLiveExternalQuery('เช็คสภาพอากาศ')).toBe(true);expect(detectChatIntent('เช็คสภาพอากาศ',now).kind).toBe('live');expect(isLiveExternalQuery('ดูหุ้นให้สัก 3 ตัว')).toBe(true);expect(detectChatIntent('ดูหุ้นให้สัก 3 ตัว',now).kind).toBe('live');expect(detectChatIntent('พรุ่งนี้ฝนตกไหม',now).kind).toBe('live');expect(isLiveExternalQuery('หุ้นคืออะไร')).toBe(false)});
  it('preserves semantic appointment scope for day and week questions',()=>{const d=parseDateIntent('พรุ่งนี้มีนัดอะไรไหม',now)!;expect(d.scope).toBe('appointments');const w=parseTemporalIntent('สัปดาห์หน้ามีนัดไหม',now)!;expect(w.scope).toBe('appointments')});
@@ -29,6 +31,16 @@ const auth={authorization:'Bearer user-token','content-type':'application/json'}
 const json=(value:any,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});
 describe('structured chat retrieval',()=>{
  afterEach(()=>vi.unstubAllGlobals());
+ it('prefers authoritative retirement event over conflicting Auto Memory and locks follow-up source',async()=>{
+   const manual={id:'manual-retire',title:'งานเลี้ยงเกษียณ ผอ. เผือก',description:'วันที่ 18 กันยายน 2569 เวลา 17.00 น. มีงานเลี้ยงเกษียณของ ผอ. เผือก ช่วงเย็น สถานที่ร้านอาหารยังไม่ระบุและจะแจ้งภายหลัง',event_type:'activity',start_at:'2026-09-18T10:00:00Z',end_at:null,timezone:'Asia/Bangkok',location:'',status:'planned',priority:'normal',metadata:{},tags:['เกษียณ']};
+   const school={id:'school-retire',title:'งานเกษียณ ผอ. เผือก ที่โรงเรียน',description:'วันที่ 25 กันยายน 2569 เวลา 09.00 น. มีงานเลี้ยงเกษียณ ผอ. เผือก ที่โรงเรียน',event_type:'activity',start_at:'2026-09-25T02:00:00Z',end_at:null,timezone:'Asia/Bangkok',location:'โรงเรียน',status:'planned',priority:'normal',metadata:{},tags:['เกษียณ','โรงเรียน']};
+   const badAuto={id:'auto-retire',title:'งานเลี้ยงเกษียณ ผอ. เผือก ร้านอาหารกัลยาฟ้าใส',description:'วันที่ 18 กันยายน 2569 เวลา 17.00 น. ร้านอาหารกัลยาฟ้าใส',event_type:'activity',start_at:'2026-09-18T10:00:00Z',end_at:null,timezone:'Asia/Bangkok',location:'ร้านอาหารกัลยาฟ้าใส',status:'planned',priority:'high',metadata:{autoMemory:true},tags:['auto-memory','mobile']};
+   vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);if(url.endsWith('/auth/v1/user'))return json({id:'u1'});if(url.includes('/rest/v1/events?'))return json([manual,school,badAuto]);if(url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/conversation_summaries?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memory_nodes?'))return json([]);throw new Error('unexpected '+url)});
+   const first=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'กินเลี้ยงเกษียณ ผอ.เผือก ร้านอาหารอะไร',conversationId:'c1'})}),apiEnv),p1:any=await first.json();
+   expect(p1.data.answer).toContain('ยังไม่ได้กำหนดร้านอาหาร');expect(p1.data.answer).toContain('Auto Memory');expect(p1.data.context.sourceId).toBe('manual-retire');
+   const second=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'วันที่เท่าไร',conversationId:'c1',recentContext:[{role:'user',text:'กินเลี้ยงเกษียณ ผอ.เผือก ร้านอาหารอะไร'},{role:'ceo',text:p1.data.answer,sourceId:p1.data.context.sourceId,query:p1.data.context.query}]})}),apiEnv),p2:any=await second.json();
+   expect(p2.data.answer).toContain('18 กันยายน');expect(p2.data.context.sourceId).toBe('manual-retire');expect(p2.data.answer).not.toContain('25 กันยายน');
+ });
  it('answers วันที่ 18 from exact date fields and never auto-saves the question',async()=>{
    const calls:string[]=[];vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);calls.push(decodeURIComponent(url));
      if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
