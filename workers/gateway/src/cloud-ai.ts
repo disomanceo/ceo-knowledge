@@ -14,7 +14,7 @@ export type CloudAiResult={
 };
 
 export function cloudAiConfig(env:Env){
-  const geminiModel=clean(env.GEMINI_MODEL||'gemini-2.5-flash-lite',120)||'gemini-2.5-flash-lite';
+  const geminiModel=clean(env.GEMINI_MODEL||'gemini-3.5-flash-lite',120)||'gemini-3.5-flash-lite';
   const legacyModel=clean(env.LLM_MODEL||'gpt-5-mini',120)||'gpt-5-mini';
   const geminiConfigured=Boolean(clean(env.GEMINI_API_KEY,20));
   const legacyConfigured=Boolean(clean(env.LLM_API_KEY,20));

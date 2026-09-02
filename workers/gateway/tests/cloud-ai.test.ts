@@ -3,7 +3,7 @@ import { askGemini, cloudAiConfig } from '../src/cloud-ai';
 import { handleApi } from '../src/api';
 
 const json=(value:any,status=200)=>new Response(JSON.stringify(value),{status,headers:{'content-type':'application/json'}});
-const env:any={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public',APP_ENV:'test',GEMINI_API_KEY:'test-gemini-key',GEMINI_MODEL:'gemini-2.5-flash-lite'};
+const env:any={SUPABASE_URL:'https://project.supabase.co',SUPABASE_ANON_KEY:'public',APP_ENV:'test',GEMINI_API_KEY:'test-gemini-key',GEMINI_MODEL:'gemini-3.5-flash-lite'};
 const auth={authorization:'Bearer user-token','content-type':'application/json'};
 
 describe('Gemini cloud fallback',()=>{
@@ -13,7 +13,7 @@ describe('Gemini cloud fallback',()=>{
     const config=cloudAiConfig(env);
     expect(config.configured).toBe(true);
     expect(config.primary).toBe('gemini');
-    expect(config.gemini).toEqual({configured:true,model:'gemini-2.5-flash-lite',liveSearch:true});
+    expect(config.gemini).toEqual({configured:true,model:'gemini-3.5-flash-lite',liveSearch:true});
     expect(JSON.stringify(config)).not.toContain('test-gemini-key');
   });
 
@@ -42,7 +42,7 @@ describe('Gemini cloud fallback',()=>{
     });
     const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'ช่วยคิดชื่อโครงการ Smart School ให้หน่อย'})}),env);
     const payload:any=await response.json();
-    expect(payload.data.mode).toBe('cloud-ai');expect(payload.data.provider).toBe('gemini');expect(payload.data.model).toBe('gemini-2.5-flash-lite');
+    expect(payload.data.mode).toBe('cloud-ai');expect(payload.data.provider).toBe('gemini');expect(payload.data.model).toBe('gemini-3.5-flash-lite');
     expect(payload.data.answer).toContain('Smart School');
     expect(calls.some(x=>x.url.includes('/rest/v1/runtime_jobs'))).toBe(false);
   });

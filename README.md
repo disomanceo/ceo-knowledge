@@ -1,4 +1,4 @@
-﻿# Ceo Knowledge
+# Ceo Knowledge
 
 Cloud knowledge, secretary, mobile and remote-device layer for Ceo MCP Agent.
 
@@ -50,7 +50,7 @@ Ceo Knowledge ใช้เส้นทาง `AUTO` ดังนี้:
 3. ถ้าเครื่องออฟไลน์ → ใช้ Gemini Cloud fallback
 4. ถ้าไม่มี AI ใดพร้อม → Knowledge/Memory/Tasks/Events ยังตอบจาก Supabase ได้ตามปกติ
 
-ค่าเริ่มต้น Cloud คือ `gemini-2.5-flash-lite` เพราะมี Free Tier และรองรับ Google Search grounding สำหรับคำถามข้อมูลปัจจุบันตามโควต้าของ Google. API key ต้องเก็บเป็น Cloudflare Worker Secret เท่านั้นและห้ามใส่ใน `apps/mobile` หรือ commit ลง Git.
+ค่าเริ่มต้น Cloud คือ `gemini-3.5-flash-lite` เพราะมี Free Tier และรองรับ Google Search grounding สำหรับคำถามข้อมูลปัจจุบันตามโควต้าของ Google. API key ต้องเก็บเป็น Cloudflare Worker Secret เท่านั้นและห้ามใส่ใน `apps/mobile` หรือ commit ลง Git.
 
 ตั้งค่า Gemini ครั้งแรก:
 
