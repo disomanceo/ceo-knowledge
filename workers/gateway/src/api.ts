@@ -8,7 +8,7 @@ import { askCloudAi, cloudAiConfig } from './cloud-ai';
 import { contextResolutionPublic, isContextualQuestion, resolveConversationContext } from './context-resolver';
 import { resolveLiveDirect } from './live-resolver';
 import { analyzeIntelligenceV2, eventConstraintMatches } from './intelligence-v2';
-import { researchWeb } from './web-research';
+import { researchTelemetry, researchWeb } from './web-research';
 import { composeResearchAnswer } from './answer-intelligence';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
@@ -314,7 +314,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'deterministic-first-ai-on-ambiguity', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'I1-I8', research:researchTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'deterministic-first-ai-on-ambiguity', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -333,6 +333,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'I1-I8',research:researchTelemetry(),routing:'direct-web-runtime-cloud',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -522,7 +523,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         const cloud=await askCloudAi(env,resolvedQuery,[],{live:true,provider:routeProvider,model:routeModel});
         if(cloud.ok)return ok({intent:'live',semanticIntent:intelligenceV2.intent,answer:cloud.answer,displayText:cloud.answer,spokenText:cloud.answer,search:{query:resolvedQuery,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,directReason:direct?.reason,intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
         return ok({intent:'live',semanticIntent:intelligenceV2.intent,answer:fallbackAnswer,displayText:fallbackAnswer,spokenText:fallbackAnswer,search:{query:resolvedQuery,results:[]},ai:contextResolution.usedAI,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',directReason:direct?.reason,cloudReason:cloud.reason,intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
-      }      const question = isContextualQuestion(message,contextResolution);
+      }
+      const question = isContextualQuestion(message,contextResolution);
       let autoMemory: any = null;
       if (!question) {
         if(memoryTurn.followUp&&!memoryTurn.message)return ok({intent:'remember',answer:'ยังไม่มีข้อความก่อนหน้าที่ชัดเจนให้บันทึกครับ',memory:null,autoMemory:null,mode:'knowledge',provider:'knowledge'});

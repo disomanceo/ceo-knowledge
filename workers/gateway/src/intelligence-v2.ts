@@ -32,7 +32,7 @@ export function analyzeIntelligenceV2(input:string):IntelligenceV2{
   else if(/(?:สภาพอากาศ|อากาศ|ฝน|อุณหภูมิ|ทอง|หุ้น|ค่าเงิน|ราคาน้ำมัน|น้ำมัน|คริปโต|ราคา).*(?:วันนี้|ตอนนี้|ล่าสุด|เท่าไร|เท่าไหร่)|(?:วันนี้|ตอนนี้|ล่าสุด).*(?:ราคา|อากาศ|หุ้น|ทอง)/i.test(normalized)){intent='current_fact';route='direct';confidence=.95}
   else if(/(?:วิจัย|เจาะลึก|หลายแหล่ง|วิเคราะห์เชิงลึก|research)/i.test(normalized)){intent='research';route='research';confidence=.94}
   else if(constraint!=='none'||field!=='general'||/(?:โรงเรียน|ผอ\.?|ครู|นัด|กิจกรรม)/.test(normalized)){intent='event';route='memory';confidence=.88}
-  else if(/(?:^|\s)(?:ค้น|หา|เว็บ|อินเทอร์เน็ต|ออนไลน์|แนะนำ|รีวิว|เปรียบเทียบ)(?:\s|$)|(?:ล่าสุด|ปัจจุบัน|ตอนนี้).*(?:อะไร|ไหน|อย่างไร|ยังไง|ให้หน่อย|บ้าง)?/i.test(normalized)&&!/(?:ความจำ|นัด|งานค้าง)/.test(normalized)){intent='web';route='web';confidence=.84}
+  else if(/(?:ช่วย)?(?:ค้น|หา|แนะนำ|รีวิว|เปรียบเทียบ)|(?:เว็บ|อินเทอร์เน็ต|ออนไลน์)|(?:ล่าสุด|ปัจจุบัน|ตอนนี้).*(?:อะไร|ไหน|อย่างไร|ยังไง|ให้หน่อย|บ้าง)?/i.test(normalized)&&!/(?:ความจำ|นัด|งานค้าง)/.test(normalized)){intent='web';route='web';confidence=.84}
   else if(/(?:งานค้าง|ต้องทำ|task|todo)/i.test(normalized)){intent='task';route='memory';confidence=.95}
   return{normalized,intent,route,answerField:field,eventConstraint:constraint,requestedCount:intent==='news'?countFrom(normalized):3,fresh,entities:[],confidence};
 }
