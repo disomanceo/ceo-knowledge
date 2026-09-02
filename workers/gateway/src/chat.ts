@@ -13,7 +13,7 @@ export function recallAnswerField(message:string):RecallAnswerField {
   if(/(?:ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|ร้าน(?:อาหาร)?(?:ไหน|อะไร)|กินเลี้ยงที่ไหน)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text)||/^\s*ร้านอาหาร\s+\S+/i.test(text))return'location';
   if(/(?:กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'time';
   if(/(?:วันไหน|วันอะไร|วันที่(?:เท่าไร|อะไร)|เมื่อไร|เมื่อไหร่)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'date';
-  if(/(?:ใคร|ใครบ้าง|กับใคร|พาใคร|ผู้เกี่ยวข้อง(?:มี)?ใครบ้าง)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'person';
+  if(/(?:ใคร|ใครบ้าง|กับใคร|ไปกับใคร|ไปกับครู(?:อะไร|คนไหน|ใคร)?|ครู(?:อะไร|คนไหน|ใคร)ไป(?:ด้วย)?|ใครไปด้วย|พาใคร|ผู้เกี่ยวข้อง(?:มี)?ใครบ้าง)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'person';
   if(/(?:สถานะ(?:อะไร)?|เสร็จหรือยัง|เรียบร้อยหรือยัง|ทำถึงไหน|เป็นยังไงบ้าง)(?:บ้าง)?\s*[?？]?(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i.test(text))return'status';
   return'general';
 }
@@ -21,7 +21,7 @@ export function recallAnswerField(message:string):RecallAnswerField {
 export function recallSubjectQuery(message:string):string {
   const text=normalizeThaiRecall(clean(message,4000)).replace(/[?？]/g,' ');
   return text
-    .replace(/\s*(?:อะไรบ้าง|อะไร|ใครบ้าง|ใคร|ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|ร้าน(?:อาหาร)?(?:ไหน|อะไร)|กินเลี้ยงที่ไหน|วันไหน|วันอะไร|วันที่(?:เท่าไร|อะไร)|เมื่อไร|เมื่อไหร่|กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร|สถานะ(?:อะไร)?|เสร็จหรือยัง|เรียบร้อยหรือยัง|ทำถึงไหน|เป็นยังไงบ้าง)(?:บ้าง)?\s*(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i,'')
+    .replace(/\s*(?:อะไรบ้าง|อะไร|ใครบ้าง|ใคร|กับใคร|ไปกับใคร|ไปกับครู(?:อะไร|คนไหน|ใคร)?|ครู(?:อะไร|คนไหน|ใคร)ไป(?:ด้วย)?|ใครไปด้วย|ที่ไหน|สถานที่(?:ไหน)?|อยู่ไหน|จัดที่ไหน|ไปที่ไหน|ร้าน(?:อาหาร)?(?:ไหน|อะไร)|กินเลี้ยงที่ไหน|วันไหน|วันอะไร|วันที่(?:เท่าไร|อะไร)|เมื่อไร|เมื่อไหร่|กี่โมง|เวลาไหน|เวลาเท่าไร|เวลาอะไร|สถานะ(?:อะไร)?|เสร็จหรือยัง|เรียบร้อยหรือยัง|ทำถึงไหน|เป็นยังไงบ้าง)(?:บ้าง)?\s*(?:ครับ|คะ|ค่ะ|นะ)?\s*$/i,'')
     .replace(/\s*(?:จัด(?:งาน|ขึ้น)?|เริ่ม(?:งาน)?|มี(?:งาน)?|นัด(?:หมาย)?|(?:ต้อง)?ส่ง|กำหนด|เกิด(?:ขึ้น)?)\s*$/i,'')
     .replace(/^(?:แล้ว|แล้วก็|แล้วมัน|แล้วอันนั้น|อันนั้น|เรื่องนั้น|มัน)\s*/i,'')
     .replace(/^(?:จัดงาน|จัด|เริ่มงาน|เริ่ม|มีงาน|มี|นัดหมาย|นัด|กำหนด)\s*/i,'')
@@ -112,8 +112,19 @@ function thaiDateFromText(value:unknown):string {
 function rowText(row:any):string {
   return stripMemoryPrefix(row?.content||row?.summary||row?.rationale||row?.description||row?.title||'');
 }
-function firstEvent(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='events'&&predicate(row));}
-function firstTask(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='tasks'&&predicate(row));}
+function participantAnswer(message:string,row:any):string {
+  const text=clean(`${row?.description||''} ${rowText(row)}`,5000);
+  const teacher=[...text.matchAll(/ครู\s*([\p{L}\p{M}]{1,30}?)(?=ไปด้วย|ร่วม|ไป|[\s,.;]|$)/gu)].map(m=>clean(m[1],80)).filter(Boolean);
+  const uniqueTeachers=[...new Set(teacher)];
+  const count=text.match(/(?:เด็ก|นักเรียน)\s*(?:ไป\s*)?(\d{1,3})\s*คน/u)?.[1]||'';
+  const asksTeacher=/ครู/u.test(message);
+  if(asksTeacher&&uniqueTeachers.length)return `${uniqueTeachers.map(name=>`ครู${name}`).join(' และ ')}ครับ`;
+  const parts:string[]=[];
+  if(count)parts.push(`นักเรียน ${count} คน`);
+  if(uniqueTeachers.length)parts.push(uniqueTeachers.map(name=>`ครู${name}`).join(' และ '));
+  return parts.length?`ไปกับ${parts.join(' และ')}ครับ`:'';
+}
+function firstEvent(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='events'&&predicate(row));}function firstTask(rows:any[],predicate:(row:any)=>boolean=()=>true){return rows.find(row=>row?.kind==='tasks'&&predicate(row));}
 function isAutoMemoryRow(row:any){return row?.metadata?.autoMemory===true||(Array.isArray(row?.tags)&&row.tags.includes('auto-memory'));}
 function eventSemanticText(row:any):string {
   return normalizeRecallMatchText(`${clean(row?.title,500)} ${clean(row?.description,1200)}`)
@@ -189,10 +200,13 @@ export function composeRecallAnswer(message:string,results:any[]):{answer:string
     if(event)return{answer:`สถานะกิจกรรมตอนนี้ ${clean(event.status,80)} ครับ`,confident:true,field,sourceId:clean(event.id,200)};
   }
   if(field==='person'){
-    const row=rows.find(item=>/(?:ครู|นักเรียน|ผอ\.|ผอ\s|นาย|นาง|นางสาว|คุณ|ผู้)/i.test(rowText(item)));
-    if(row){const text=rowText(row);if(text)return{answer:`ข้อมูลที่บันทึกไว้ระบุว่า ${text.replace(/[。.]$/,'')}ครับ`,confident:true,field,sourceId:clean(row.id||row.node_id,200)};}
+    const row=rows.find(item=>/(?:ครู|นักเรียน|ผอ\.|ผอ\s|นาย|นาง|นางสาว|คุณ|ผู้)/i.test(`${clean(item?.description,2000)} ${rowText(item)}`));
+    if(row){
+      const participant=participantAnswer(message,row);
+      if(participant)return{answer:participant,confident:true,field,sourceId:clean(row.id||row.node_id,200)};
+      const text=rowText(row);if(text)return{answer:`ข้อมูลที่บันทึกไว้ระบุว่า ${text.replace(/[。.]$/,'')}ครับ`,confident:true,field,sourceId:clean(row.id||row.node_id,200)};
+    }
   }
-
   const first=rows[0]||{};
   const title=stripMemoryPrefix(first?.title||'ข้อมูลที่พบ');
   const body=rowText(first);

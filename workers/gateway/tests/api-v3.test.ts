@@ -20,6 +20,15 @@ describe('Ceo V3 API behavior',()=>{
     expect(calls.some(x=>x.url.includes('/memories?')&&x.method==='POST')).toBe(false);
   });
 
+  it('locks participant follow-ups to the active event',async()=>{
+    const event={id:'evt11',title:'รับทุน ปตท.',description:'วันที่ 11 กันยายน 2569 รับทุน ปตท. นำเด็กไป 10 คน ครูอ๊อฟไปด้วย',start_at:'2026-09-11T02:00:00Z',status:'planned',metadata:{}};
+    vi.stubGlobal('fetch',async(input:any)=>{const url=decodeURIComponent(String(input));if(url.endsWith('/auth/v1/user'))return json({id:'u1'});if(url.includes('/rest/v1/events?')&&url.includes('id=eq.evt11'))return json([event]);if(url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memory_nodes?'))return json([]);if(url.includes('/rest/v1/events?'))return json([]);throw new Error('unexpected '+url)});
+    for(const [message,expected] of [['ไปกับใคร','ไปกับนักเรียน 10 คน และครูอ๊อฟครับ'],['ไปกับครูอะไร','ครูอ๊อฟครับ']]){
+      const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message,recentContext:[{role:'user',text:'รับทุน ปตท วันไหน'},{role:'ceo',text:'วันที่ 11 กันยายน 2569ครับ',sourceId:'evt11',query:'รับทุน ปตท วันไหน'}]})}),env),payload:any=await response.json();
+      expect(payload.data.answer).toBe(expected);expect(payload.data.context.sourceId).toBe('evt11');
+    }
+  });
+
   it('locks a bare location follow-up to the previously selected event',async()=>{
     const event={id:'evt18',title:'งานเลี้ยงเกษียณ ผอ. เผือก',description:'งานเลี้ยงเกษียณ',location:'ร้านอาหารกัลยาฟ้าใส',start_at:'2026-09-18T10:00:00Z',status:'planned',metadata:{}};
     vi.stubGlobal('fetch',async(input:any)=>{const url=decodeURIComponent(String(input));if(url.endsWith('/auth/v1/user'))return json({id:'u1'});if(url.includes('/rest/v1/events?')&&url.includes('id=eq.evt18'))return json([event]);if(url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memory_nodes?'))return json([]);if(url.includes('/rest/v1/events?'))return json([]);throw new Error('unexpected '+url)});

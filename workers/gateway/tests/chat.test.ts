@@ -4,7 +4,11 @@ import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, reca
 describe('cloud chat fallback',()=>{
   it('strips Thai recall question tails for Knowledge search',()=>{
     expect(recallSearchQuery('เมื่อวานกินข้าวกับอะไร')).toBe('เมื่อวานกินข้าวกับ');
-    expect(recallSearchQuery('ไปกับใคร?')).toBe('ไปกับ');
+    expect(recallSearchQuery('ไปกับใคร?')).toBe('ไปกับใคร');
+    expect(recallSubjectQuery('ไปกับใคร?')).toBe('');
+    expect(isBareRecallFieldQuestion('ไปกับใคร?')).toBe(true);
+    expect(recallSubjectQuery('ไปกับครูอะไร')).toBe('');
+    expect(isBareRecallFieldQuestion('ไปกับครูอะไร')).toBe(true);
     expect(recallSearchQuery('ดูภาพยนต์วันไหน')).toBe('ดูภาพยนตร์');
     expect(recallSearchQuery('งานเกณียณวันไหน')).toBe('งานเกษียณ');
     expect(recallSearchQuery('งานเกษียณจัดวันไหน')).toBe('งานเกษียณ');
@@ -22,6 +26,9 @@ describe('cloud chat fallback',()=>{
     expect(recallAnswerField('ดูภาพยนต์วันไหน')).toBe('date');
     expect(recallAnswerField('ดูภาพยนต์ที่ไหน')).toBe('location');
     expect(recallAnswerField('เริ่มกี่โมง')).toBe('time');
+    expect(recallAnswerField('ไปกับใคร')).toBe('person');
+    expect(recallAnswerField('ไปกับครูอะไร')).toBe('person');
+    expect(recallAnswerField('ใครไปด้วย')).toBe('person');
   });
   it('keeps action semantics separate from broad PA subject search',()=>{
     const send={kind:'events',title:'ส่งเล่ม PA ให้สำนักงานเขต',description:'กำหนดส่งเอกสาร PA'};
@@ -77,6 +84,11 @@ describe('cloud chat fallback',()=>{
     expect(composeRecallAnswer('ดูภาพยนต์วันไหน',[event]).answer).toBe('วันที่ 7 กันยายน 2569ครับ');
     expect(composeRecallAnswer('ดูภาพยนต์ที่ไหน',[event]).answer).toBe('ที่ Big C สุพรรณบุรีครับ');
     expect(composeRecallAnswer('ดูภาพยนต์กี่โมง',[event]).answer).toBe('กิจกรรมนี้ยังไม่ได้ระบุเวลาไว้ครับ');
+  });
+  it('answers participant follow-ups from the active event details',()=>{
+    const event={id:'ptt11',kind:'events',title:'รับทุน ปตท.',description:'วันที่ 11 กันยายน 2569 รับทุน ปตท. นำเด็กไป 10 คน ครูอ๊อฟไปด้วย',start_at:'2026-09-11T02:00:00.000Z'};
+    expect(composeRecallAnswer('ไปกับใคร',[event]).answer).toBe('ไปกับนักเรียน 10 คน และครูอ๊อฟครับ');
+    expect(composeRecallAnswer('ไปกับครูอะไร',[event]).answer).toBe('ครูอ๊อฟครับ');
   });
   it('returns multiple matching event dates for one subject',()=>{
     const events=[
