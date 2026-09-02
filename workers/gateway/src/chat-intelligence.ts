@@ -84,11 +84,11 @@ export function extractTemporalTopic(input:string){
     /\d{1,3}\s*(?:วัน|สัปดาห์|เดือน)\s*(?:ข้างหน้า|ถัดไป)/g,
     /(?:ช่วง|ในช่วง|ตั้งแต่|ถึง|จนถึง)/g,
     /^(?:มี|อยากรู้|ช่วยดู|ดูให้หน่อย|เช็ก|เช็ค)\s*/g,
-    /\s*(?:มี)?(?:อะไรบ้าง|อะไร|บ้าง|ไหม|มั้ย|หรือไม่|หรือเปล่า|หรือยัง)\s*$/g,
+    /\s*(?:มี)?(?:กี่\s*(?:โรงเรียน|แห่ง|งาน|รายการ|ครั้ง)|จำนวน(?:กี่|เท่าไร|เท่าไหร่)|ทั้งหมดกี่|อะไรบ้าง|อะไร|บ้าง|ไหม|มั้ย|หรือไม่|หรือเปล่า|หรือยัง)\s*$/g,
   ];
   for(const re of removals)t=t.replace(re,' ');
-  const topic=clean(t).replace(/^(?:มี)\s*/,'').trim();
-  return /^(?:งาน|นัด|กิจกรรม|เรื่อง|รายการ)$/.test(topic)?'':topic;
+  const topic=clean(t).replace(/^(?:มี)\s*/,'').replace(/^(?:โรงเรียน|แห่ง)\s*(?:ที่)?\s*/,'').replace(/\s*(?:กี่|จำนวน|ทั้งหมด)\s*$/,'').trim();
+  return /^(?:งาน|นัด|กิจกรรม|เรื่อง|รายการ|โรงเรียน|แห่ง)$/.test(topic)?'':topic;
 }
 
 export function parseTemporalIntent(input:string,now=new Date()):TemporalIntent|null{
@@ -150,7 +150,7 @@ export function isLiveExternalQuery(input:string):boolean{
 export function detectChatIntent(input:string,now=new Date()):ChatIntent{
   const t=clean(input);if(isLiveExternalQuery(t))return{kind:'live'};
   const date=parseDateIntent(t,now);if(date&&(isQuestionLike(t)||/(?:มีงาน|มีนัด|ตาราง|นัด|กิจกรรม|schedule|what.*on)/i.test(t)))return date;
-  const temporal=parseTemporalIntent(t,now);if(temporal&&(isQuestionLike(t)||/(?:มีงาน|มีนัด|ตาราง|กิจกรรม|สรุป|อะไรบ้าง|schedule)/i.test(t)))return temporal;
+  const temporal=parseTemporalIntent(t,now);if(temporal&&(isQuestionLike(t)||/(?:มีงาน|มีนัด|ตาราง|กิจกรรม|สรุป|อะไรบ้าง|กี่\s*(?:โรงเรียน|แห่ง|งาน|รายการ|ครั้ง)|จำนวน|ทั้งหมดกี่|schedule)/i.test(t)))return temporal;
   if(/(?:งานค้าง|งานที่ต้องทำ|ต้องทำอะไร|tasks?|todo)/i.test(t))return{kind:'tasks'};
   if(/(?:วันนี้|today|นัดวันนี้|ตารางวันนี้)/i.test(t))return{kind:'today'};
   return{kind:isQuestionLike(t)?'recall':'general'};
