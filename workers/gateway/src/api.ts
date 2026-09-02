@@ -1,7 +1,7 @@
 import { filterActiveKnowledgeGraph, type DeviceRecord, type EventRecord, type KnowledgeGraphLink, type KnowledgeGraphNode, type MemoryRecord, type TaskRecord } from '@ceo-knowledge/shared';
 import { assertRemoteTool, bearerToken, jsonBody, newIdempotencyKey, parseApprovalDecision, parseDeviceAccessAction, remoteApprovalState, safeLimit, searchOr, sha256Hex } from './security';
 import { ceoDriveConfig, ceoDriveFiles, ceoDriveImport, ceoDrivePreview, ceoDriveStatus, driveProviderToken } from './drive';
-import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectMatches, recallSubjectQuery } from './chat';
+import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from './chat';
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
@@ -92,7 +92,8 @@ async function temporalKnowledge(env: Env, token: string, intent: TimeIntent) {
 async function searchKnowledge(env: Env, token: string, query: string, limit = 10, answerField = recallAnswerField(query), preferredSourceId = '') {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
-  const recallTerms = [...new Set(recallQ.split(/\s+/).filter(Boolean).flatMap(token => token.length >= 6 ? [token, token.slice(0, -1)] : [token]))].join(' ');
+  const normalizedSearch = recallSearchTerms(q) || recallQ;
+  const recallTerms = [...new Set(normalizedSearch.split(/\s+/).filter(Boolean).flatMap(token => token.length >= 6 ? [token, token.slice(0, -1)] : [token]))].join(' ');
   const perTable = Math.max(5, Math.min(25, limit * 2));
   const specs = [
     ['memories', ['title', 'content'], 'id,title,content,memory_type,importance,scope,status,tags,created_at,updated_at'],

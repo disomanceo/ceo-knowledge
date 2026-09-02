@@ -47,8 +47,9 @@ function normalizeRecallMatchText(value:string):string {
   return normalizeThaiRecall(clean(value,5000).toLocaleLowerCase())
     .replace(/กินเลี้ยง/g,'เลี้ยง ')
     .replace(/เกษียณงาน/g,'เกษียณ งาน')
+    .replace(/(?:พี่|ครู|ผอ\.?)[\s]*(?=[\p{L}\p{N}])/gu,' ')
     .replace(/big\s*c/g,'bigc')
-    .replace(/[^\p{L}\p{N}]+/gu,' ')
+    .replace(/[^\p{L}\p{M}\p{N}]+/gu,' ')
     .replace(/\s+/g,' ')
     .trim();
 }
@@ -57,6 +58,10 @@ const RECALL_MATCH_STOPWORDS=new Set(['งาน','เรื่อง','กิ�
 
 export function recallMatchTokens(message:string):string[] {
   return [...new Set(normalizeRecallMatchText(recallSearchQuery(message)).split(/\s+/).filter(token=>token.length>=2&&!RECALL_MATCH_STOPWORDS.has(token)))];
+}
+
+export function recallSearchTerms(message:string):string {
+  return recallMatchTokens(message).join(' ');
 }
 
 export function recallSubjectMatches(message:string,row:any):boolean {

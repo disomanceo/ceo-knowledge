@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSubjectMatches, recallSubjectQuery } from '../src/chat';
+import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, recallAnswerField, recallSearchQuery, recallSearchTerms, recallSubjectMatches, recallSubjectQuery } from '../src/chat';
 
 describe('cloud chat fallback',()=>{
   it('strips Thai recall question tails for Knowledge search',()=>{
@@ -32,6 +32,9 @@ describe('cloud chat fallback',()=>{
     expect(recallSubjectMatches('ประเมิน pa ดอนขาดวันไหน',bangChik)).toBe(false);
     expect(recallSubjectMatches('กินเลี้ยงเกษียณงาน ผอ. เผือกวันไหน',retireDinner)).toBe(true);
     expect(recallSubjectMatches('กินเลี้ยงเกษียณงาน ผอ. เผือกวันไหน',retireSchool)).toBe(false);
+    expect(recallSubjectMatches('กินเลี้ยงพี่เผือกวันไหน',retireDinner)).toBe(true);
+    expect(recallSubjectMatches('กินเลี้ยงพี่เผือกวันไหน',retireSchool)).toBe(false);
+    expect(recallSearchTerms('กินเลี้ยงพี่เผือกวันไหน')).toBe('เลี้ยง เผือก');
     expect(recallSubjectMatches('จัดงานเกษียณวันไหน',retireSchool)).toBe(true);
   });
   it('answers greetings without pretending Knowledge is missing',()=>{
