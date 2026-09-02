@@ -7,6 +7,9 @@ import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProvi
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
 import { contextResolutionPublic, isContextualQuestion, resolveConversationContext } from './context-resolver';
 import { resolveLiveDirect } from './live-resolver';
+import { analyzeIntelligenceV2, eventConstraintMatches } from './intelligence-v2';
+import { researchWeb } from './web-research';
+import { composeResearchAnswer } from './answer-intelligence';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
@@ -500,21 +503,26 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const preferredSourceId=(bareField||contextResolution.dependsOnPriorContext)?clean(previousSource?.sourceId,200):'';
       const contextMeta=contextResolutionPublic(contextResolution);
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
+      const originalV2=analyzeIntelligenceV2(message), intelligenceV2=analyzeIntelligenceV2(resolvedQuery);
       const intent = detectChatIntent(resolvedQuery);
       if(contextResolution.clarificationRequired){
         return ok({intent:'clarification',answer:'ขอระบุอีกนิดครับว่าหมายถึงเรื่องไหน เพื่อไม่ให้ผมเดาผิดบริบท',mode:'clarification',provider:'knowledge',ai:true,aiConfigured:cloudAiConfig(env).configured,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
       }
-      if (intent.kind === 'live') {
+      if (intent.kind === 'live' || ['news','current_fact','web','research'].includes(intelligenceV2.intent)) {
         const direct=await resolveLiveDirect(resolvedQuery).catch(()=>null);
-        if(direct?.ok)return ok({intent:'live',answer:direct.answer,search:{query:resolvedQuery,results:[]},ai:contextResolution.usedAI,aiConfigured:cloudAiConfig(env).configured,mode:'live-direct',provider:'direct',source:direct.source,sources:[{title:direct.source,url:direct.sourceUrl}],liveData:direct.data,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
-        const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ตอนนี้ทั้งแหล่งข้อมูลตรง Ceo Runtime และ Cloud AI Search ยังไม่พร้อมใช้งานครับ';
+        if(direct?.ok){const spoken=String(direct.answer||'').replace(/\s*·\s*/g,' ');return ok({intent:'live',semanticIntent:intelligenceV2.intent,answer:direct.answer,displayText:direct.answer,spokenText:spoken,speechChunks:[spoken],search:{query:resolvedQuery,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-direct',provider:'direct',source:direct.source,sources:[{title:direct.source,url:direct.sourceUrl}],liveData:direct.data,intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});}
+        const shouldResearch=intelligenceV2.intent==='news'||intelligenceV2.intent==='web'||intelligenceV2.intent==='research'||intelligenceV2.intent==='current_fact';
+        if(shouldResearch){
+          const research=await researchWeb(resolvedQuery,{kind:intelligenceV2.intent==='news'?'news':'web',limit:intelligenceV2.intent==='news'?Math.max(3,intelligenceV2.requestedCount):5}).catch(()=>null);
+          if(research?.ok){const composed=composeResearchAnswer(research,intelligenceV2.intent==='news'?intelligenceV2.requestedCount:1);return ok({intent:'live',semanticIntent:intelligenceV2.intent,...composed,search:{query:resolvedQuery,results:research.evidence},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'web-research',provider:'web',research:{kind:research.kind,reason:research.reason,latencyMs:research.latencyMs},intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});}
+        }
+        const fallbackAnswer='ตอนนี้ยังค้นข้อมูลล่าสุดจากอินเทอร์เน็ตไม่สำเร็จครับ';
         const routed=await enqueueProviderChat(env,token,resolvedQuery,[],{provider:routeProvider,model:routeModel,strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
-        if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:resolvedQuery,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,directReason:direct?.reason,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        if(routed?.job?.id)return ok({intent:'live',semanticIntent:intelligenceV2.intent,answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:resolvedQuery,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,directReason:direct?.reason,intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
         const cloud=await askCloudAi(env,resolvedQuery,[],{live:true,provider:routeProvider,model:routeModel});
-        if(cloud.ok)return ok({intent:'live',answer:cloud.answer,search:{query:resolvedQuery,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,directReason:direct?.reason,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
-        return ok({intent:'live',answer:fallbackAnswer,search:{query:resolvedQuery,results:[]},ai:contextResolution.usedAI,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',directReason:direct?.reason,cloudReason:cloud.reason,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
-      }
-      const question = isContextualQuestion(message,contextResolution);
+        if(cloud.ok)return ok({intent:'live',semanticIntent:intelligenceV2.intent,answer:cloud.answer,displayText:cloud.answer,spokenText:cloud.answer,search:{query:resolvedQuery,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,directReason:direct?.reason,intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        return ok({intent:'live',semanticIntent:intelligenceV2.intent,answer:fallbackAnswer,displayText:fallbackAnswer,spokenText:fallbackAnswer,search:{query:resolvedQuery,results:[]},ai:contextResolution.usedAI,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',directReason:direct?.reason,cloudReason:cloud.reason,intelligenceV2,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+      }      const question = isContextualQuestion(message,contextResolution);
       let autoMemory: any = null;
       if (!question) {
         if(memoryTurn.followUp&&!memoryTurn.message)return ok({intent:'remember',answer:'ยังไม่มีข้อความก่อนหน้าที่ชัดเจนให้บันทึกครับ',memory:null,autoMemory:null,mode:'knowledge',provider:'knowledge'});
@@ -565,6 +573,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const currentField=recallAnswerField(message);
       const answerField=contextResolution.answerField!=='general'?contextResolution.answerField:currentField;
       const search = await searchKnowledge(env, token, resolvedQuery, 8, answerField, preferredSourceId);
+      if(originalV2.eventConstraint!=='none'){const constrained=search.results.filter((row:any)=>eventConstraintMatches(originalV2.eventConstraint,row));if(constrained.length){search.results=constrained;search.count=constrained.length;}}
       const compositionMessage=answerField!==currentField&&contextResolution.usedAI?resolvedQuery:message;
       const directAnswer=composeRecallAnswer(compositionMessage,search.results);
       const fallbackAnswer = directAnswer.answer || cloudChatFallback(compositionMessage, search.results);

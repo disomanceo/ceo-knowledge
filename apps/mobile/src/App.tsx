@@ -89,15 +89,15 @@ function ChatPage() {
     if(!speechSynthesisSupported()){setVoiceState('unsupported');return false}
     const prefs=voicePrefsRef.current,text=manual?normalizeSpeechText(raw):speechTextForMode(raw,prefs.mode);if(!text)return false;
     const synth=window.speechSynthesis,chunks=splitSpeechText(text),selected=chooseVoice(synth.getVoices(),prefs);if(!chunks.length)return false;try{synth.resume()}catch{}
-    voiceSequenceRef.current+=1;const sequence=voiceSequenceRef.current;synth.cancel();setVoiceState('speaking');let finished=0;
-    for(const chunk of chunks){const utterance=new SpeechSynthesisUtterance(chunk);utterance.lang=prefs.lang;utterance.rate=prefs.rate;utterance.pitch=prefs.pitch;utterance.volume=prefs.volume;if(selected)utterance.voice=selected as SpeechSynthesisVoice;utterance.onend=()=>{finished+=1;if(sequence===voiceSequenceRef.current&&finished>=chunks.length)setVoiceState('ready')};utterance.onerror=(event:any)=>{const reason=String(event?.error||'');if(sequence!==voiceSequenceRef.current||reason==='interrupted'||reason==='canceled')return;setVoiceState('error')};synth.speak(utterance)}
+    voiceSequenceRef.current+=1;const sequence=voiceSequenceRef.current;synth.cancel();setVoiceState('speaking');let index=0;
+    const speakNext=()=>{if(sequence!==voiceSequenceRef.current)return;if(index>=chunks.length){setVoiceState('ready');return}const utterance=new SpeechSynthesisUtterance(chunks[index++]!);utterance.lang=prefs.lang;utterance.rate=prefs.rate;utterance.pitch=prefs.pitch;utterance.volume=prefs.volume;if(selected)utterance.voice=selected as SpeechSynthesisVoice;utterance.onend=()=>speakNext();utterance.onerror=(event:any)=>{const reason=String(event?.error||'');if(sequence!==voiceSequenceRef.current||reason==='interrupted'||reason==='canceled')return;setVoiceState('error')};synth.speak(utterance)};speakNext();
     try{sessionStorage.setItem('ceo-voice-activated-v1','1')}catch{}return true;
   };
   const setVoiceMode=(mode:VoiceMode)=>{if(mode==='off')stopVoice();setVoicePrefs(v=>({...v,mode}));setVoiceMenuOpen(false)};
-  const appendCeo=(text:string,meta:string,autoSpeak=true,context?:ChatItem['context'])=>{const spokenText=normalizeSpeechText(text);const item:ChatItem={role:'ceo',text,spokenText,meta,at:Date.now(),...(context?{context}:{})};setItems(v=>[...v,item]);const mode=voicePrefsRef.current.mode;if(autoSpeak&&(mode==='auto'||mode==='smart'))setTimeout(()=>speakDevice(mode==='smart'?text:spokenText,false),0)};
+  const appendCeo=(text:string,meta:string,autoSpeak=true,context?:ChatItem['context'],serverSpokenText='')=>{const spokenText=serverSpokenText.trim()||normalizeSpeechText(text);const item:ChatItem={role:'ceo',text,spokenText,meta,at:Date.now(),...(context?{context}:{})};setItems(v=>[...v,item]);const mode=voicePrefsRef.current.mode;if(autoSpeak&&(mode==='auto'||mode==='smart'))setTimeout(()=>speakDevice(mode==='smart'?text:spokenText,false),0)};
   const clearLog=()=>{if(!window.confirm('เคลียร์ประวัติแชตในอุปกรณ์นี้?'))return;stopVoice();const id='mobile:'+crypto.randomUUID();setConversationId(id);try{localStorage.setItem(CHAT_ID_KEY,id);localStorage.removeItem(CHAT_LOG_KEY)}catch{}setItems([{...greeting,at:Date.now()}]);setProvider('AUTO · READY');setFollowLatest(true);setNewBelow(false)};
   async function send() {
-    const text=message.trim();if(!text||busy)return;
+    const text=message.trim();if(!text||busy)return;stopVoice();
     const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text,sourceId:item.context?.sourceId,query:item.context?.query}));
     setMessage('');setItems(v=>[...v,{role:'user',text,at:Date.now()}]);setBusy(true);setThinking('Ceo กำลังค้น Knowledge…');setFollowLatest(true);setNewBelow(false);
     try {
@@ -106,15 +106,15 @@ function ChatPage() {
         const device=String(r.device?.name||'Ceo Runtime');setProvider('AUTO · RUNTIME');setThinking('Ceo Auto Router บน '+device+' กำลังเลือก Model…');
         const job=await waitForRuntimeJob(String(r.jobId));const result=job?.result&&typeof job.result==='object'?job.result:{};const answer=String(result?.response||'').trim();
         if(job?.status==='completed'&&result?.available!==false&&answer){const actualProvider=String(result?.provider||'auto').toUpperCase(),actualModel=String(result?.model||'').trim(),routeLabel=[actualProvider,actualModel].filter(Boolean).join(' · ');setProvider('AUTO · '+routeLabel);appendCeo(answer,routeLabel,true,r?.context);}
-        else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'PROVIDER_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE FALLBACK');appendCeo(fallback,'KNOWLEDGE FALLBACK · '+reason,true,r?.context);}
+        else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'PROVIDER_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE');appendCeo(fallback,'KNOWLEDGE',true,r?.context);}
       } else if(r?.mode==='ollama-pending'&&r?.jobId){
         const model=String(r.model||'qwen3:4b'),device=String(r.device?.name||'Ceo Runtime');setProvider('AUTO · OLLAMA '+model);setThinking('Ollama '+model+' บน '+device+' กำลังคิด…');
         const job=await waitForRuntimeJob(String(r.jobId));const result=job?.result&&typeof job.result==='object'?job.result:{};const answer=String(result?.response||'').trim();
         if(job?.status==='completed'&&result?.available!==false&&answer){const actualModel=String(result?.model||model);setProvider('AUTO · OLLAMA '+actualModel);appendCeo(answer,'OLLAMA · '+actualModel,true,r?.context);}
-        else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'OLLAMA_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE FALLBACK');appendCeo(fallback,'KNOWLEDGE FALLBACK · '+reason,true,r?.context);}
+        else {const fallback=String(r.fallbackAnswer||'ยังไม่พบคำตอบที่เชื่อถือได้ในรอบนี้ครับ'),reason=String(result?.reason||job?.error?.message||job?.status||'OLLAMA_UNAVAILABLE');setProvider('AUTO · KNOWLEDGE');appendCeo(fallback,'KNOWLEDGE',true,r?.context);}
       } else {
         const mode=String(r?.mode||r?.intent||'knowledge'),cloudProvider=String(r?.provider||'AI').toUpperCase(),cloudModel=String(r?.model||'').trim(),grounded=r?.grounded===true;
-        const cloudLabel=['CLOUD',cloudProvider,cloudModel,grounded?'SEARCH':''].filter(Boolean).join(' · '),label=mode==='cloud-ai'?cloudLabel:mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';setProvider(label);appendCeo(r.answer||'เรียบร้อยครับ',label.replace('AUTO · ',''),true,r?.context);
+        const cloudLabel=['CLOUD',cloudProvider,cloudModel,grounded?'SEARCH':''].filter(Boolean).join(' · '),label=mode==='web-research'?'WEB · RESEARCH':mode==='live-direct'?'LIVE · DIRECT':mode==='cloud-ai'?cloudLabel:mode==='knowledge'||mode==='knowledge-only'?'AUTO · KNOWLEDGE':'CLOUD · SECRETARY';setProvider(label);appendCeo(r.displayText||r.answer||'เรียบร้อยครับ',label.replace('AUTO · ',''),true,r?.context,String(r.spokenText||''));
       }
     } catch(e:any){setProvider('AUTO · ERROR');appendCeo('เกิดข้อผิดพลาด: '+String(e?.message||e),'ERROR');}
     finally{setBusy(false);setThinking('Ceo กำลังค้นความจำ…')}

@@ -15,13 +15,19 @@ describe('Ceo Chat Voice',()=>{
 
   it('normalizes Thai technical speech and screen-only content',()=>{
     const text=normalizeSpeechText('Ceo : API และ MCP พร้อมเวลา 09:00 ดู https://example.com และ `gemini`');
-    expect(text).toContain('เอพีไอ');expect(text).toContain('เอ็มซีพี');expect(text).toContain('9 นาฬิกา');expect(text).toContain('ลิงก์อยู่บนหน้าจอ');expect(text).not.toContain('https://');
+    expect(text).toContain('เอพีไอ');expect(text).toContain('เอ็มซีพี');expect(text).toContain('9 โมงเช้า');expect(text).toContain('ลิงก์อยู่บนหน้าจอ');expect(text).not.toContain('https://');
   });
 
   it('removes Markdown decoration but keeps the spoken meaning',()=>{
     const text=normalizeSpeechText('## **นัดหมาย**\n- วันที่ 7 ก.ย. 2569 เวลา 07:00 น.\n- ไป Big C');
     expect(text).not.toContain('*');expect(text).not.toContain('#');expect(text).not.toContain('- วันที่');
-    expect(text).toContain('นัดหมาย');expect(text).toContain('กันยายน');expect(text).toContain('7 นาฬิกา');
+    expect(text).toContain('นัดหมาย');expect(text).toContain('กันยายน');expect(text).toContain('7 โมงเช้า');
+  });
+
+  it('expands Thai abbreviations and measurement units from context',()=>{
+    const text=normalizeSpeechText('ผอ. เผือก ไป รร.วัดดอนขาด น้ำหนัก 5 กก. สูง 120 ซม. เดิน 10 ม. รถวิ่ง 60 กม./ชม. นักเรียน ม.3');
+    expect(text).toContain('ผู้อำนวยการ');expect(text).toContain('โรงเรียน');expect(text).toContain('5 กิโลกรัม');expect(text).toContain('120 เซนติเมตร');expect(text).toContain('10 เมตร');expect(text).toContain('60 กิโลเมตรต่อชั่วโมง');expect(text).toContain('มัธยมศึกษาปีที่ 3');
+    expect(normalizeSpeechText('เวลา 17:00 น.')).toContain('5 โมงเย็น');
   });
 
   it('speaks symbols only when the sentence is explicitly talking about symbols',()=>{

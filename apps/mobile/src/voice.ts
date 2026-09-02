@@ -78,6 +78,36 @@ function expandThaiMonths(text:string):string {
   return out;
 }
 
+function naturalThaiTime(hour:number,minute:number):string {
+  const suffix=minute===30?'โมงครึ่ง':minute?`โมง ${minute} นาที`:'โมง';
+  if(hour===0)return minute?`เที่ยงคืน ${minute} นาที`:'เที่ยงคืน';
+  if(hour>=1&&hour<=5)return `${hour} ${suffix}`;
+  if(hour>=6&&hour<=11)return `${hour} ${suffix}เช้า`;
+  if(hour===12)return minute?`เที่ยง ${minute} นาที`:'เที่ยง';
+  if(hour===13)return minute?`บ่ายโมง ${minute} นาที`:'บ่ายโมง';
+  if(hour>=14&&hour<=15)return `บ่าย ${hour-12} ${suffix}`;
+  if(hour>=16&&hour<=18)return `${hour-12} ${suffix}เย็น`;
+  return `${hour-18} ${suffix}กลางคืน`;
+}
+
+function normalizeContextualAbbreviations(text:string):string {
+  const literal=/(?:คำว่า|ตัวย่อ|ย่อมาจาก|สะกด|พิมพ์|เขียน)\s*[“\"']?[^\n]{0,20}$/i;
+  let out=text;
+  if(!literal.test(out))out=out.replace(/ผอ\.?(?=\s|[\p{L}])/gu,'ผู้อำนวยการ ').replace(/รร\.?(?=\s|[\p{L}])/gu,'โรงเรียน ');
+  return out
+    .replace(/ป\.(\d+)/g,'ประถมศึกษาปีที่ $1')
+    .replace(/ม\.(\d+)/g,'มัธยมศึกษาปีที่ $1')
+    .replace(/(\d+(?:\.\d+)?)\s*กม\.?(?:\s*\/\s*ชม\.?)?/g,(_m,n)=>_m.includes('/')?`${n} กิโลเมตรต่อชั่วโมง`:`${n} กิโลเมตร`)
+    .replace(/(\d+(?:\.\d+)?)\s*กก\.?(?=\s|$|[,;:)])/g,'$1 กิโลกรัม')
+    .replace(/(\d+(?:\.\d+)?)\s*ซม\.?(?=\s|$|[,;:)])/g,'$1 เซนติเมตร')
+    .replace(/(\d+(?:\.\d+)?)\s*มม\.?(?=\s|$|[,;:)])/g,'$1 มิลลิเมตร')
+    .replace(/(\d+(?:\.\d+)?)\s*ตร\.\s*ม\.?(?=\s|$|[,;:)])/g,'$1 ตารางเมตร')
+    .replace(/(\d+(?:\.\d+)?)\s*ม\.?(?=\s|$|[,;:)])/g,'$1 เมตร')
+    .replace(/(\d+(?:\.\d+)?)\s*°\s*C\b/gi,'$1 องศาเซลเซียส')
+    .replace(/(\d+(?:\.\d+)?)\s*%/g,'$1 เปอร์เซ็นต์')
+    .replace(/บาท\s*\/\s*ลิตร/g,'บาทต่อลิตร');
+}
+
 function normalizeMeaningfulSymbols(text:string,preserve:boolean):string {
   const symbolContext=/(?:พิมพ์|เขียน|เครื่องหมาย|สัญลักษณ์|ใช้|ใส่|ตามด้วย|ขึ้นต้นด้วย|ลงท้ายด้วย)/i;
   if(!preserve || !symbolContext.test(text))return text.replace(/[*#_~|]+/g,' ');
@@ -106,13 +136,13 @@ export function normalizeSpeechText(input: string, options: SpeechFormatOptions 
     .replace(/__([^_]+)__/g,'$1')
     .replace(/~~([^~]+)~~/g,'$1')
     .replace(/[│├└┌┐┘┬┴┼─]+/g,' ')
-    .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:น\.)?/g,(_m,h,m)=>`${Number(h)} นาฬิกา${Number(m) ? ' '+Number(m)+' นาที' : ''}`)
-    .replace(/\b([01]?\d|2[0-3])\s*นาฬิกา\s*00\s*นาที\b/g,'$1 นาฬิกา')
+    .replace(/\b([01]?\d|2[0-3])[:.]([0-5]\d)\s*(?:น\.)?/g,(_m,h,m)=>naturalThaiTime(Number(h),Number(m)))
     .replace(/\s*→\s*/g,' แล้ว ')
     .replace(/\s*[=]{2,}\s*/g,' ')
     .replace(/\.{3,}/g,'…');
 
   text=expandThaiMonths(text);
+  text=normalizeContextualAbbreviations(text);
   text=normalizeMeaningfulSymbols(text,preserveMeaningfulSymbols);
   for(const [pattern,replacement] of replacements)text=text.replace(pattern,replacement);
 
