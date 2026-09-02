@@ -13,7 +13,7 @@ import { composeResearchAnswer } from './answer-intelligence';
 import { rerankMemoryCandidates } from './memory-reranker';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
-import { autoCapture, containsAutoMemorySecret, isMemorySaveStatusQuestion, resolveMemoryCaptureTurn } from './auto-memory';
+import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
 import { handleMcpRequest, type McpToolCallContext } from './mcp';
 import { applyMemoryMaintenance, manageMemoryNode, planMemoryMaintenance } from './memory-gardener';
 
@@ -515,13 +515,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const routeModel=routerMode==='model'?clean(body.router?.model,120):'';
       const backgroundModel=routerMode==='auto'?'':clean(body.router?.backgroundModel,120);
       const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000),sourceId:clean(item?.sourceId,200),query:clean(item?.query,1000)})).filter(item=>item.text);
-      if(isMemorySaveStatusQuestion(message)){
-        const priorAck=[...recentContext].reverse().find(item=>(item.role==='ceo'||item.role==='assistant')&&/(?:บันทึก|จำไว้|รับทราบ).*(?:แล้ว|เรียบร้อย)|บันทึกเป็น(?:กิจกรรม|งาน)|จำไว้ใน Ceo Knowledge/i.test(item.text));
-        const answer=priorAck?'บันทึกไว้แล้วครับ':'ยังไม่พบการยืนยันว่าข้อความก่อนหน้าถูกบันทึกครับ';
-        return ok({intent:'memory-status',answer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null});
-      }
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
       const previousSource=[...recentContext].reverse().find(item=>item.role==='ceo'&&item.sourceId);
+      const saveStatusQuestion=/(?:บันทึก|จำ)(?:ไว้|ให้)?(?:แล้ว)?\s*(?:ไหม|หรือยัง|ไว้ยัง|หรือเปล่า|ป่าว|ยัง)\s*$/i.test(message);
+      if(saveStatusQuestion&&previousUser){const verify=await searchKnowledge(env,token,previousUser.text,5,recallAnswerField(previousUser.text));const matched=verify.results.filter((row:any)=>recallSubjectMatches(previousUser.text,row));const first=matched[0]||verify.results[0];const sourceId=clean(first?.id||first?.node_id,200);return ok({intent:'remember-status',answer:first?'บันทึกไว้แล้วครับ':'ยังไม่พบว่าข้อความก่อนหน้าถูกบันทึกใน Ceo Knowledge ครับ',mode:'knowledge',provider:'knowledge',ai:false,search:verify,autoMemory:null,context:{conversationId:clean(body.conversationId,200),query:previousUser.text,field:'status',sourceId}});}
       const bareField=isBareRecallFieldQuestion(message);
       const bareSchoolList=/^\s*(?:รร\.?|โรงเรียน)\s*(?:ไหน|อะไร)(?:บ้าง)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(message);
       const listContextQuery=bareSchoolList&&previousUser?`${previousUser.text.replace(/กี่\s*โรงเรียน|จำนวน\s*โรงเรียน|ทั้งหมดกี่\s*โรงเรียน/gi,'').trim()} โรงเรียนไหนบ้าง`:'';
