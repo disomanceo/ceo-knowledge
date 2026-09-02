@@ -353,7 +353,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3.5', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3.6', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -372,7 +372,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
-    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3.5',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3.6',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -584,7 +584,10 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const bareSchoolList=/^\s*(?:รร\.?|โรงเรียน)\s*(?:ไหน|อะไร)(?:บ้าง)?\s*(?:ครับ|ค่ะ|คะ|นะ)?\s*$/i.test(message);
       const listContextQuery=bareSchoolList&&previousUser?`${previousUser.text.replace(/กี่\s*โรงเรียน|จำนวน\s*โรงเรียน|ทั้งหมดกี่\s*โรงเรียน/gi,'').trim()} โรงเรียนไหนบ้าง`:'';
       const legacyContextualQuery=listContextQuery||(bareField&&previousUser?previousUser.text:message);
-      const contextResolution=await resolveConversationContext(env,message,recentContext,{model:backgroundModel});
+      const hasDateDiscriminator=/(?:วันที่|วัน)\s*\d{1,2}/u.test(message);
+      const hardTopicSwitch=stateV3.mode==='NEW_TOPIC'&&!bareField&&!hasDateDiscriminator;
+      const contextInput=hardTopicSwitch?[]:recentContext;
+      const contextResolution=await resolveConversationContext(env,message,contextInput,{model:backgroundModel});
       const resolvedQuery=listContextQuery||(contextResolution.confidence>=0.6?contextResolution.resolvedQuery:legacyContextualQuery);
       const stateUsesSource=['FIELD_FOLLOW_UP','FOLLOW_UP','UPDATE','CORRECTION','CONFIRMATION'].includes(stateV3.mode);
       const preferredSourceId=(bareField||contextResolution.dependsOnPriorContext||stateUsesSource)?clean(stateV3.activeSourceId||previousSource?.sourceId,200):'';
@@ -601,14 +604,19 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       }
       const explicitContextField=contextField(message);
       const carriedContextField=explicitContextField!=='general'?explicitContextField:(/(?:วันที่|วัน)\s*\d{1,2}/u.test(message)&&['date','time','location','person','status'].includes(clean(previousResultTurn?.field,40))?clean(previousResultTurn?.field,40) as any:'general');
-      const selectedContextRef=selectContextResult(message,priorResultSet);
-      if(priorResultSet.length&&carriedContextField!=='general'){
+      const resultSetReuseAllowed=!hardTopicSwitch&&(bareField||hasDateDiscriminator||['FIELD_FOLLOW_UP','FOLLOW_UP','ENTITY_SWITCH'].includes(stateV3.mode));
+      const selectedContextRef=resultSetReuseAllowed?selectContextResult(message,priorResultSet):null;
+      if(resultSetReuseAllowed&&priorResultSet.length&&carriedContextField!=='general'){
         if(selectedContextRef){
           const contextRows=await loadContextResultRefs(env,token,[selectedContextRef]);
           if(contextRows[0])contextRows[0]._sourceLocked=true;
+          if(carriedContextField==='person'){
+            const supportQuery=clean(previousResultTurn?.query||selectedContextRef.title,1000);
+            const support=await searchKnowledge(env,token,supportQuery,6,'person','');
+            contextRows.push(...support.results.filter((row:any)=>String(row.id||row.node_id||'')!==selectedContextRef.id&&row.kind!=='events'&&recallSubjectMatches(supportQuery,row)).slice(0,4));
+          }
           const fieldMessage=carriedContextField==='location'?`${message} ที่ไหน`:carriedContextField==='person'?`${message} ไปกับใคร`:carriedContextField==='time'?`${message} กี่โมง`:carriedContextField==='date'?`${message} วันไหน`:message;
-          const contextualAnswer=composeRecallAnswer(fieldMessage,contextRows);
-          if(contextualAnswer.confident)return ok({intent:'result-set-followup',answer:contextualAnswer.answer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:selectedContextRef.id,resultSet:priorResultSet}});
+          const contextualAnswer=composeRecallAnswer(fieldMessage,contextRows);          if(contextualAnswer.confident)return ok({intent:'result-set-followup',answer:contextualAnswer.answer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:selectedContextRef.id,resultSet:priorResultSet}});
         }else if(bareField&&priorResultSet.length>1){
           const contextRows=await loadContextResultRefs(env,token,priorResultSet),listAnswer=contextListAnswer(message,contextRows);
           if(listAnswer)return ok({intent:'result-set-expand',answer:listAnswer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:'',resultSet:priorResultSet}});

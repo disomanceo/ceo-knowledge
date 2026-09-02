@@ -204,9 +204,10 @@ export function composeRecallAnswer(message:string,results:any[]):{answer:string
     if(lockedPersonRow){
       const participant=participantAnswer(message,lockedPersonRow);
       if(participant)return{answer:participant,confident:true,field,sourceId:clean(lockedPersonRow.id||lockedPersonRow.node_id,200)};
+      const supporting=rows.find(item=>item!==lockedPersonRow&&/(?:ครู|นักเรียน|ผอ\.|ผอ\s|นาย|นาง|นางสาว|คุณ|ผู้)/i.test(`${clean(item?.description,2000)} ${rowText(item)}`));
+      if(supporting){const supportAnswer=participantAnswer(message,supporting);if(supportAnswer)return{answer:supportAnswer,confident:true,field,sourceId:clean(lockedPersonRow.id||lockedPersonRow.node_id,200)};}
       return{answer:'กิจกรรมนี้ยังไม่มีข้อมูลว่าไปกับใครครับ',confident:true,field,sourceId:clean(lockedPersonRow.id||lockedPersonRow.node_id,200)};
-    }
-    const row=rows.find(item=>/(?:ครู|นักเรียน|ผอ\.|ผอ\s|นาย|นาง|นางสาว|คุณ|ผู้)/i.test(`${clean(item?.description,2000)} ${rowText(item)}`));
+    }    const row=rows.find(item=>/(?:ครู|นักเรียน|ผอ\.|ผอ\s|นาย|นาง|นางสาว|คุณ|ผู้)/i.test(`${clean(item?.description,2000)} ${rowText(item)}`));
     if(row){
       const participant=participantAnswer(message,row);
       if(participant)return{answer:participant,confident:true,field,sourceId:clean(row.id||row.node_id,200)};
