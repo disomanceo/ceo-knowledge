@@ -5,7 +5,7 @@ import { cloudChatFallback, composeRecallAnswer, dedupeSemanticEvents, isBareRec
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
-import { contextResolutionPublic, isContextualQuestion, resolveConversationContext } from './context-resolver';
+import { contextResolutionPublic, isContextualQuestion } from './context-resolver';
 import { resolveLiveDirect } from './live-resolver';
 import { analyzeIntelligenceV2, eventConstraintMatches } from './intelligence-v2';
 import { researchTelemetry, researchWeb } from './web-research';
@@ -22,6 +22,9 @@ import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from 
 import { handleMcpRequest, type McpToolCallContext } from './mcp';
 import { applyMemoryMaintenance, manageMemoryNode, planMemoryMaintenance } from './memory-gardener';
 import { canonicalKeyFor, chooseCanonicalCandidate, contentEquivalent } from './memory-metabolism';
+import { interpretSemanticContext } from './semantic-interpreter';
+import { buildEvidencePack } from './evidence-pack';
+import { composeSemanticAnswer } from './semantic-answer';
 
 const corsHeaders: HeadersInit = {
   'access-control-allow-origin': '*',
@@ -353,7 +356,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3.6', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V4.0', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'v4-hybrid-semantic-interpreter+evidence-pack+grounding-guard', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -372,7 +375,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
-    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3.6',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V4.0',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'v4-semantic-interpreter+compact-context+result-set',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -587,7 +590,8 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const hasDateDiscriminator=/(?:วันที่|วัน)\s*\d{1,2}/u.test(message);
       const hardTopicSwitch=stateV3.mode==='NEW_TOPIC'&&!bareField&&!hasDateDiscriminator;
       const contextInput=hardTopicSwitch?[]:recentContext;
-      const contextResolution=await resolveConversationContext(env,message,contextInput,{model:backgroundModel});
+      const semanticFrame=await interpretSemanticContext(env,message,contextInput,{model:backgroundModel});
+      const contextResolution={attempted:semanticFrame.aiRequired,usedAI:semanticFrame.aiUsed,source:semanticFrame.interpreterSource as any,confidence:semanticFrame.confidence,ambiguous:semanticFrame.ambiguous,resolvedQuery:semanticFrame.standaloneQuery,subject:semanticFrame.topic,intent:semanticFrame.intent,answerField:semanticFrame.requestedField,dependsOnPriorContext:semanticFrame.usePriorContext,reason:semanticFrame.reason,clarificationRequired:semanticFrame.aiRequired&&semanticFrame.confidence<0.6};
       const resolvedQuery=listContextQuery||(contextResolution.confidence>=0.6?contextResolution.resolvedQuery:legacyContextualQuery);
       const stateUsesSource=['FIELD_FOLLOW_UP','FOLLOW_UP','UPDATE','CORRECTION','CONFIRMATION'].includes(stateV3.mode);
       const preferredSourceId=(bareField||contextResolution.dependsOnPriorContext||stateUsesSource)?clean(stateV3.activeSourceId||previousSource?.sourceId,200):'';
@@ -725,7 +729,13 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const fallbackAnswer = directAnswer.answer || cloudChatFallback(compositionMessage, search.results);
       const responseContext={conversationId:clean(body.conversationId,200),query:resolvedQuery,field:directAnswer.field||answerField,sourceId:directAnswer.sourceId||preferredSourceId,resultSet:contextResultSet(search.results)};
       if(directAnswer.confident&&(intent.kind==='recall'||contextResolution.ambiguous)){
-        return ok({ intent:'recall', answer:directAnswer.answer, search, ai:contextResolution.usedAI, aiConfigured:cloudAiConfig(env).configured, mode:'knowledge', provider:'knowledge', autoMemory:null, contextResolution:contextMeta, context:responseContext });
+        return ok({ intent:'recall', answer:directAnswer.answer, search, ai:contextResolution.usedAI, aiConfigured:cloudAiConfig(env).configured, mode:'knowledge', provider:'knowledge', autoMemory:null, semanticV4:{interpreter:semanticFrame.interpreterSource,aiUsed:semanticFrame.aiUsed,estimatedInputTokens:semanticFrame.estimatedInputTokens,composer:false}, contextResolution:contextMeta, context:responseContext });
+      }
+      const evidencePack=buildEvidencePack(resolvedQuery,search.results,{limit:6,maxChars:5200});
+      const semanticComposeNeeded=search.results.length>0&&(semanticFrame.aiRequired||memoryRerank.quality.decision==='judge'||search.results.length>1);
+      if(semanticComposeNeeded){
+        const semanticAnswer=await composeSemanticAnswer(env,message,resolvedQuery,evidencePack,{provider:routeProvider,model:backgroundModel||routeModel});
+        if(semanticAnswer.ok)return ok({intent:'recall',answer:semanticAnswer.answer,search,ai:true,aiConfigured:true,mode:'semantic-ai',provider:semanticAnswer.provider,model:semanticAnswer.model,grounded:true,autoMemory:null,semanticV4:{interpreter:semanticFrame.interpreterSource,interpreterAiUsed:semanticFrame.aiUsed,interpreterEstimatedTokens:semanticFrame.estimatedInputTokens,composer:true,composerEstimatedTokens:semanticAnswer.estimatedInputTokens,evidenceItems:evidencePack.items.length,evidenceTruncated:evidencePack.truncated},contextResolution:contextMeta,context:responseContext});
       }
       const personalRecall=intent.kind==='recall'&&/(?:จำ|นัด|งาน|กิจกรรม|เมื่อวาน|เมื่อเช้า|เมื่อคืน|วันไหน|วันที่|ที่ไหน|กี่โมง|ใคร|กิน|ไปไหน|ครู|ผอ\.?|โรงเรียน|ของฉัน|ของผม|ของเรา)/iu.test(resolvedQuery);
       const requiresGrounding=contextResolution.ambiguous||personalRecall||search.results.length>0;
