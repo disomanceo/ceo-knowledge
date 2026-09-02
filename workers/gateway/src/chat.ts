@@ -47,6 +47,7 @@ function normalizeRecallMatchText(value:string):string {
   return normalizeThaiRecall(clean(value,5000).toLocaleLowerCase())
     .replace(/กินเลี้ยง/g,'เลี้ยง ')
     .replace(/เกษียณงาน/g,'เกษียณ งาน')
+    .replace(/(ประเมิน|เลี้ยง|เกษียณ|นิเทศ|ประชุม|อบรม|รับทุน|ส่งเล่ม|สอบ|ทดสอบ)/g,' $1 ')
     .replace(/(?:พี่|ครู|ผอ\.?)[\s]*(?=[\p{L}\p{N}])/gu,' ')
     .replace(/big\s*c/g,'bigc')
     .replace(/[^\p{L}\p{M}\p{N}]+/gu,' ')

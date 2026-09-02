@@ -35,6 +35,9 @@ describe('cloud chat fallback',()=>{
     expect(recallSubjectMatches('กินเลี้ยงพี่เผือกวันไหน',retireDinner)).toBe(true);
     expect(recallSubjectMatches('กินเลี้ยงพี่เผือกวันไหน',retireSchool)).toBe(false);
     expect(recallSearchTerms('กินเลี้ยงพี่เผือกวันไหน')).toBe('เลี้ยง เผือก');
+    expect(recallSearchTerms('ดอนขาดประเมินวันไหน')).toBe('ดอนขาด ประเมิน');
+    expect(recallSubjectMatches('ดอนขาดประเมินวันไหน',donKhat)).toBe(true);
+    expect(recallSubjectMatches('ดอนขาดประเมินวันไหน',bangChik)).toBe(false);
     expect(recallSubjectMatches('จัดงานเกษียณวันไหน',retireSchool)).toBe(true);
   });
   it('answers greetings without pretending Knowledge is missing',()=>{
