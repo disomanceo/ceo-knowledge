@@ -5,6 +5,7 @@ import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, reca
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
+import { resolveLiveDirect } from './live-resolver';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
 import { autoCapture, containsAutoMemorySecret, resolveMemoryCaptureTurn } from './auto-memory';
@@ -497,14 +498,15 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
       const intent = detectChatIntent(message);
       if (intent.kind === 'live') {
-        const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ตอนนี้ทั้ง Ceo Runtime และ Cloud AI Search ยังไม่พร้อมใช้งานครับ';
+        const direct=await resolveLiveDirect(message).catch(()=>null);
+        if(direct?.ok)return ok({intent:'live',answer:direct.answer,search:{query:message,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-direct',provider:'direct',source:direct.source,sources:[{title:direct.source,url:direct.sourceUrl}],liveData:direct.data,autoMemory:null,live:true});
+        const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ตอนนี้ทั้งแหล่งข้อมูลตรง Ceo Runtime และ Cloud AI Search ยังไม่พร้อมใช้งานครับ';
         const routed=await enqueueProviderChat(env,token,message,[],{provider:routeProvider,model:routeModel,strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
-        if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null,live:true});
+        if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,directReason:direct?.reason,autoMemory:null,live:true});
         const cloud=await askCloudAi(env,message,[],{live:true,provider:routeProvider,model:routeModel});
-        if(cloud.ok)return ok({intent:'live',answer:cloud.answer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,autoMemory:null,live:true});
-        return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',cloudReason:cloud.reason,autoMemory:null,live:true});
-      }
-      const question = isQuestionLike(message);
+        if(cloud.ok)return ok({intent:'live',answer:cloud.answer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,directReason:direct?.reason,autoMemory:null,live:true});
+        return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',directReason:direct?.reason,cloudReason:cloud.reason,autoMemory:null,live:true});
+      }      const question = isQuestionLike(message);
       let autoMemory: any = null;
       if (!question) {
         if(memoryTurn.followUp&&!memoryTurn.message)return ok({intent:'remember',answer:'ยังไม่มีข้อความก่อนหน้าที่ชัดเจนให้บันทึกครับ',memory:null,autoMemory:null,mode:'knowledge',provider:'knowledge'});
