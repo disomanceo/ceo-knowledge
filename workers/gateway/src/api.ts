@@ -11,6 +11,7 @@ import { analyzeIntelligenceV2, eventConstraintMatches } from './intelligence-v2
 import { researchTelemetry, researchWeb } from './web-research';
 import { composeResearchAnswer } from './answer-intelligence';
 import { rerankMemoryCandidates } from './memory-reranker';
+import { contextField, contextListAnswer, contextResultSet, selectContextResult, type ContextResultRef } from './result-set-context';
 import { deriveConversationStateV3 } from './conversation-state-v3';
 import { applyActiveEventRelation } from './memory-relations';
 import { recordCorrection, retrievalTelemetry } from './retrieval-telemetry';
@@ -102,6 +103,18 @@ async function temporalKnowledge(env: Env, token: string, intent: TimeIntent) {
   const uniq=(rows:any[])=>{const seen=new Set<string>();return rows.filter(row=>{const key=clean(row.id||row.title||row.content,500).toLocaleLowerCase();if(!key||seen.has(key))return false;seen.add(key);return true})};
   return dedupeTemporalKnowledge({events:uniq(events),tasks:uniq(tasks),memories});
 }
+async function loadContextResultRefs(env:Env,token:string,refs:ContextResultRef[]){
+  const out:any[]=[];
+  for(const ref of (Array.isArray(refs)?refs:[]).slice(0,12)){
+    const table=ref.kind==='events'?'events':ref.kind==='tasks'?'tasks':ref.kind==='memories'?'memories':ref.kind==='memory_nodes'?'memory_nodes':'';
+    if(!table||!ref.id)continue;
+    const idField=table==='memory_nodes'?'node_id':'id';
+    const rows=await rest<any[]>(env,token,`${table}${qs({select:'*',[idField]:`eq.${ref.id}`,limit:1})}`).catch(()=>[]);
+    if(rows[0])out.push({...rows[0],kind:ref.kind,_sourceLocked:false});
+  }
+  return out;
+}
+
 async function searchKnowledge(env: Env, token: string, query: string, limit = 10, answerField = recallAnswerField(query), preferredSourceId = '') {
   const q = clean(query, 240);
   const recallQ = recallSearchQuery(q);
@@ -340,7 +353,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3.4', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', intelligence:'V3.5', research:researchTelemetry(), retrieval:retrievalTelemetry(), environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'state-v3-weighted-anchor-quality-gate', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -359,7 +372,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
-    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3.4',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
+    if (url.pathname === '/api/intelligence/status' && request.method === 'GET') return ok({version:'V3.5',research:researchTelemetry(),retrieval:retrievalTelemetry(),routing:'state-memory-direct-web-runtime-cloud',context:'structured-state+weighted-anchor',memory:'relation-aware+canonical-lifecycle+freshness+quality-gate+constrained-ai-judge',evaluation:'recall@1/3/10+mrr+false-absence',speech:'structured-display-spoken-chunks'});
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
 
     if ((url.pathname === '/api/memory/auto-capture' || url.pathname === '/api/auto-memory/capture') && request.method === 'POST') {
@@ -552,17 +565,19 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/search' && request.method === 'GET') return ok(await searchKnowledge(env, token, clean(url.searchParams.get('q'), 240), safeLimit(url.searchParams.get('limit'), 10, 30)));
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
-      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string;sourceId?:string;query?:string}>; router?:{mode?:string;provider?:string;model?:string;backgroundModel?:string}; clientContext?:{latitude?:number;longitude?:number;timezone?:string} }>(request), message = clean(body.message, 4000);
+      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string;sourceId?:string;query?:string;field?:string;resultSet?:ContextResultRef[]}>; router?:{mode?:string;provider?:string;model?:string;backgroundModel?:string}; clientContext?:{latitude?:number;longitude?:number;timezone?:string} }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
       const routerMode=['auto','provider','model'].includes(clean(body.router?.mode,20))?clean(body.router?.mode,20):'auto';
       const requestedProvider=['gemini','openai','claude','ollama'].includes(clean(body.router?.provider,40))?clean(body.router?.provider,40):'auto';
       const routeProvider=routerMode==='auto'?'auto':requestedProvider;
       const routeModel=routerMode==='model'?clean(body.router?.model,120):'';
       const backgroundModel=routerMode==='auto'?'':clean(body.router?.backgroundModel,120);
-      const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000),sourceId:clean(item?.sourceId,200),query:clean(item?.query,1000)})).filter(item=>item.text);
+      const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000),sourceId:clean(item?.sourceId,200),query:clean(item?.query,1000),field:clean(item?.field,40),resultSet:(Array.isArray(item?.resultSet)?item.resultSet:[]).slice(0,12).map(ref=>({id:clean(ref?.id,200),kind:clean(ref?.kind,40),title:clean(ref?.title,300),startAt:clean(ref?.startAt,100)||undefined,dueAt:clean(ref?.dueAt,100)||undefined,location:clean(ref?.location,300)||undefined})).filter(ref=>ref.id)})).filter(item=>item.text);
       const stateV3=deriveConversationStateV3(message,recentContext);
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
       const previousSource=[...recentContext].reverse().find(item=>item.role==='ceo'&&item.sourceId);
+      const previousResultTurn=[...recentContext].reverse().find(item=>item.role==='ceo'&&Array.isArray(item.resultSet)&&item.resultSet.length>0);
+      const priorResultSet=(previousResultTurn?.resultSet||[]) as ContextResultRef[];
       const saveStatusQuestion=/(?:บันทึก|จำ)(?:ไว้|ให้)?(?:แล้ว)?\s*(?:ไหม|หรือยัง|ไว้ยัง|หรือเปล่า|ป่าว|ยัง)\s*$/i.test(message);
       if(saveStatusQuestion&&previousUser){const verify=await searchKnowledge(env,token,previousUser.text,5,recallAnswerField(previousUser.text));const matched=verify.results.filter((row:any)=>recallSubjectMatches(previousUser.text,row));const first=matched[0]||verify.results[0];const sourceId=clean(first?.id||first?.node_id,200);return ok({intent:'remember-status',answer:first?'บันทึกไว้แล้วครับ':'ยังไม่พบว่าข้อความก่อนหน้าถูกบันทึกใน Ceo Knowledge ครับ',mode:'knowledge',provider:'knowledge',ai:false,search:verify,autoMemory:null,context:{conversationId:clean(body.conversationId,200),query:previousUser.text,field:'status',sourceId}});}
       const bareField=isBareRecallFieldQuestion(message);
@@ -582,6 +597,21 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
         if(earlyRelation.applied){
           if(stateV3.mode==='CORRECTION')recordCorrection({conversationId:clean(body.conversationId,200),sourceId:preferredSourceId,message,previousQuery:stateV3.activeQuery});
           return ok({intent:'memory-update',answer:stateV3.mode==='CORRECTION'?'แก้ไขข้อมูลในกิจกรรมเดิมให้แล้วครับ':'เพิ่มข้อมูลในกิจกรรมเดิมให้แล้วครับ',mode:'knowledge',provider:'knowledge',ai:false,relation:earlyRelation,autoMemory:null,stateV3,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:stateV3.activeQuery||resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        }
+      }
+      const explicitContextField=contextField(message);
+      const carriedContextField=explicitContextField!=='general'?explicitContextField:(/(?:วันที่|วัน)\s*\d{1,2}/u.test(message)&&['date','time','location','person','status'].includes(clean(previousResultTurn?.field,40))?clean(previousResultTurn?.field,40) as any:'general');
+      const selectedContextRef=selectContextResult(message,priorResultSet);
+      if(priorResultSet.length&&carriedContextField!=='general'){
+        if(selectedContextRef){
+          const contextRows=await loadContextResultRefs(env,token,[selectedContextRef]);
+          if(contextRows[0])contextRows[0]._sourceLocked=true;
+          const fieldMessage=carriedContextField==='location'?`${message} ที่ไหน`:carriedContextField==='person'?`${message} ไปกับใคร`:carriedContextField==='time'?`${message} กี่โมง`:carriedContextField==='date'?`${message} วันไหน`:message;
+          const contextualAnswer=composeRecallAnswer(fieldMessage,contextRows);
+          if(contextualAnswer.confident)return ok({intent:'result-set-followup',answer:contextualAnswer.answer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:selectedContextRef.id,resultSet:priorResultSet}});
+        }else if(bareField&&priorResultSet.length>1){
+          const contextRows=await loadContextResultRefs(env,token,priorResultSet),listAnswer=contextListAnswer(message,contextRows);
+          if(listAnswer)return ok({intent:'result-set-expand',answer:listAnswer,mode:'knowledge',provider:'knowledge',ai:false,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:previousResultTurn?.query||resolvedQuery,field:carriedContextField,sourceId:'',resultSet:priorResultSet}});
         }
       }
       if(contextResolution.clarificationRequired){
@@ -640,14 +670,14 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
           const schoolKeys=new Set(constrained.map((row:any)=>clean(`${row.title||''} ${row.description||''}`,1200).match(/โรงเรียน(?:วัด)?\s*([^—–,·\n]+?)(?=\s*(?:วันที่|เวลา|$))/u)?.[1]?.replace(/^วัด\s*/,'').trim()).filter(Boolean));
           const count=schoolKeys.size||constrained.length;
           const answer=count?`เดือนนี้มี ${count} โรงเรียนที่ต้องประเมินครับ`:'เดือนนี้ยังไม่พบโรงเรียนที่ต้องประเมินจากข้อมูลที่บันทึกไว้ครับ';
-          return ok({intent:intent.kind,answer,aggregate:{type:'count',count,events:constrained},temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:false,mode:'knowledge',provider:'knowledge',autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+          return ok({intent:intent.kind,answer,aggregate:{type:'count',count,events:constrained},temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:false,mode:'knowledge',provider:'knowledge',autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:'general',sourceId:preferredSourceId,resultSet:contextResultSet(constrained)}});
         }
         const temporalField=contextResolution.answerField!=='general'?contextResolution.answerField:recallAnswerField(message);
         if(temporalField!=='general'){
           const rows=[...temporal.events.map((row:any)=>({...row,kind:'events'})),...temporal.tasks.map((row:any)=>({...row,kind:'tasks'})),...temporal.memories];
           const constrained=originalV2.eventConstraint!=='none'?rows.filter((row:any)=>eventConstraintMatches(originalV2.eventConstraint,row)):rows;
           const direct=composeRecallAnswer(message,constrained.length?constrained:rows);
-          if(direct.confident)return ok({intent:intent.kind,answer:direct.answer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:false,mode:'knowledge',provider:'knowledge',autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:direct.field,sourceId:direct.sourceId||preferredSourceId}});
+          if(direct.confident)return ok({intent:intent.kind,answer:direct.answer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:false,mode:'knowledge',provider:'knowledge',autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:direct.field,sourceId:direct.sourceId||preferredSourceId,resultSet:contextResultSet(constrained.length?constrained:rows)}});
         }
         const fallbackAnswer=composeTemporalAnswer(intent,temporal);
         if(intent.scope==='appointments'&&contextResolution.ambiguous&&(temporal.events.length||temporal.tasks.length||temporal.memories.length)){ 
@@ -662,7 +692,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
           const cloud=await askCloudAi(env,analysisPrompt,groundedRows,{provider:routeProvider,model:backgroundModel||routeModel,groundedOnly:true});
           if(cloud.ok)return ok({intent:intent.kind,answer:cloud.answer,fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:false,sources:cloud.sources,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
         }
-        return ok({ intent:intent.kind, answer:fallbackAnswer, temporal, range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope}, autoMemory:null, mode:'knowledge', provider:'knowledge', contextResolution:contextMeta, context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId} });
+        return ok({ intent:intent.kind, answer:fallbackAnswer, temporal, range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope}, autoMemory:null, mode:'knowledge', provider:'knowledge', contextResolution:contextMeta, context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId,resultSet:contextResultSet([...temporal.events.map((row:any)=>({...row,kind:'events'})),...temporal.tasks.map((row:any)=>({...row,kind:'tasks'}))])} });
       }
       if (intent.kind === 'today') {
         const today = await listToday(env, token, url);
@@ -685,7 +715,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const compositionMessage=answerField!==currentField&&contextResolution.usedAI?resolvedQuery:message;
       const directAnswer=composeRecallAnswer(compositionMessage,search.results);
       const fallbackAnswer = directAnswer.answer || cloudChatFallback(compositionMessage, search.results);
-      const responseContext={conversationId:clean(body.conversationId,200),query:resolvedQuery,field:directAnswer.field||answerField,sourceId:directAnswer.sourceId||preferredSourceId};
+      const responseContext={conversationId:clean(body.conversationId,200),query:resolvedQuery,field:directAnswer.field||answerField,sourceId:directAnswer.sourceId||preferredSourceId,resultSet:contextResultSet(search.results)};
       if(directAnswer.confident&&(intent.kind==='recall'||contextResolution.ambiguous)){
         return ok({ intent:'recall', answer:directAnswer.answer, search, ai:contextResolution.usedAI, aiConfigured:cloudAiConfig(env).configured, mode:'knowledge', provider:'knowledge', autoMemory:null, contextResolution:contextMeta, context:responseContext });
       }

@@ -17,7 +17,8 @@ import { chooseVoice, loadVoicePreferences, normalizeSpeechText, saveVoicePrefer
 import { loadRouterPreferences, routerRequest } from './router';
 
 type Tab = 'console' | 'chat' | 'today' | 'memory' | 'tasks' | 'graph' | 'drive' | 'devices' | 'approvals' | 'claims' | 'research';
-type ChatItem = { role: 'user' | 'ceo'; text: string; spokenText?: string; meta?: string; at?: number; context?: { sourceId?: string; query?: string; field?: string } };
+type ContextResultRef={id:string;kind:string;title:string;startAt?:string;dueAt?:string;location?:string};
+type ChatItem = { role: 'user' | 'ceo'; text: string; spokenText?: string; meta?: string; at?: number; context?: { sourceId?: string; query?: string; field?: string; resultSet?:ContextResultRef[] } };
 
 async function clientContextFor(message:string):Promise<{latitude?:number;longitude?:number;timezone?:string}|undefined>{
   if(!/(?:สภาพอากาศ|พยากรณ์อากาศ|อากาศ|ฝน|อุณหภูมิ|weather|forecast|rain|temperature)/i.test(message))return undefined;
@@ -105,7 +106,7 @@ function ChatPage() {
   const clearLog=()=>{if(!window.confirm('เคลียร์ประวัติแชตในอุปกรณ์นี้?'))return;stopVoice();const id='mobile:'+crypto.randomUUID();setConversationId(id);try{localStorage.setItem(CHAT_ID_KEY,id);localStorage.removeItem(CHAT_LOG_KEY)}catch{}setItems([{...greeting,at:Date.now()}]);setProvider('AUTO · READY');setFollowLatest(true);setNewBelow(false)};
   async function send() {
     const text=message.trim();if(!text||busy)return;stopVoice();
-    const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text,sourceId:item.context?.sourceId,query:item.context?.query}));
+    const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text,sourceId:item.context?.sourceId,query:item.context?.query,field:item.context?.field,resultSet:item.context?.resultSet}));
     setMessage('');setItems(v=>[...v,{role:'user',text,at:Date.now()}]);setBusy(true);setThinking('Ceo กำลังค้น Knowledge…');setFollowLatest(true);setNewBelow(false);
     try {
       const r=await api.chat(text,conversationId,recentContext,routerRequest(loadRouterPreferences()),await clientContextFor(text));

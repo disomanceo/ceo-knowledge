@@ -200,6 +200,12 @@ export function composeRecallAnswer(message:string,results:any[]):{answer:string
     if(event)return{answer:`สถานะกิจกรรมตอนนี้ ${clean(event.status,80)} ครับ`,confident:true,field,sourceId:clean(event.id,200)};
   }
   if(field==='person'){
+    const lockedPersonRow=rows.find(item=>item?._sourceLocked===true);
+    if(lockedPersonRow){
+      const participant=participantAnswer(message,lockedPersonRow);
+      if(participant)return{answer:participant,confident:true,field,sourceId:clean(lockedPersonRow.id||lockedPersonRow.node_id,200)};
+      return{answer:'กิจกรรมนี้ยังไม่มีข้อมูลว่าไปกับใครครับ',confident:true,field,sourceId:clean(lockedPersonRow.id||lockedPersonRow.node_id,200)};
+    }
     const row=rows.find(item=>/(?:ครู|นักเรียน|ผอ\.|ผอ\s|นาย|นาง|นางสาว|คุณ|ผู้)/i.test(`${clean(item?.description,2000)} ${rowText(item)}`));
     if(row){
       const participant=participantAnswer(message,row);
