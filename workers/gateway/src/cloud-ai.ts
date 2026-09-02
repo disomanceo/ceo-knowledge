@@ -58,8 +58,8 @@ function geminiSources(data:any):CloudAiSource[]{
   return out;
 }
 
-export async function askGemini(env:Env,prompt:string,context:unknown,{live=false}:{live?:boolean}={}):Promise<CloudAiResult>{
-  const config=cloudAiConfig(env),model=config.gemini.model,key=clean(env.GEMINI_API_KEY,500);
+export async function askGemini(env:Env,prompt:string,context:unknown,{live=false,model:requestedModel=''}:{live?:boolean;model?:string}={}):Promise<CloudAiResult>{
+  const config=cloudAiConfig(env),model=clean(requestedModel,120)||config.gemini.model,key=clean(env.GEMINI_API_KEY,500);
   if(!key)return{ok:false,answer:'',provider:'gemini',model,reason:'GEMINI_NOT_CONFIGURED',grounded:false,sources:[]};
   try{
     const response=await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,{
@@ -82,8 +82,8 @@ export async function askGemini(env:Env,prompt:string,context:unknown,{live=fals
   }
 }
 
-async function askOpenAiCompatible(env:Env,prompt:string,context:unknown):Promise<CloudAiResult>{
-  const config=cloudAiConfig(env),model=config.legacy.model,key=clean(env.LLM_API_KEY,500),base=config.legacy.baseUrl;
+async function askOpenAiCompatible(env:Env,prompt:string,context:unknown,requestedModel=''):Promise<CloudAiResult>{
+  const config=cloudAiConfig(env),model=clean(requestedModel,120)||config.legacy.model,key=clean(env.LLM_API_KEY,500),base=config.legacy.baseUrl;
   if(!key)return{ok:false,answer:'',provider:'openai-compatible',model,reason:'LLM_NOT_CONFIGURED',grounded:false,sources:[]};
   try{
     const response=await fetch(`${base}/chat/completions`,{
@@ -101,13 +101,16 @@ async function askOpenAiCompatible(env:Env,prompt:string,context:unknown):Promis
   }
 }
 
-export async function askCloudAi(env:Env,prompt:string,context:unknown,options:{live?:boolean}={}):Promise<CloudAiResult>{
-  const config=cloudAiConfig(env);
+export async function askCloudAi(env:Env,prompt:string,context:unknown,options:{live?:boolean;provider?:string;model?:string}={}):Promise<CloudAiResult>{
+  const config=cloudAiConfig(env),forced=clean(options.provider,40).toLowerCase(),model=clean(options.model,120);
+  if(forced==='gemini')return askGemini(env,prompt,context,{live:options.live,model});
+  if(forced==='openai')return askOpenAiCompatible(env,prompt,context,model);
+  if(forced==='claude'||forced==='ollama')return{ok:false,answer:'',provider:'none',model,reason:'CLOUD_PROVIDER_REQUIRES_RUNTIME',grounded:false,sources:[]};
   if(config.gemini.configured){
-    const gemini=await askGemini(env,prompt,context,options);
+    const gemini=await askGemini(env,prompt,context,{live:options.live,model});
     if(gemini.ok)return gemini;
     if(!config.legacy.configured)return gemini;
   }
-  if(config.legacy.configured)return askOpenAiCompatible(env,prompt,context);
+  if(config.legacy.configured)return askOpenAiCompatible(env,prompt,context,model);
   return{ok:false,answer:'',provider:'none',model:'',reason:'CLOUD_AI_NOT_CONFIGURED',grounded:false,sources:[]};
 }

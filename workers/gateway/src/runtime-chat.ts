@@ -52,7 +52,7 @@ export function ollamaSystemPrompt():string {
   return 'คุณคือ Ceo ซึ่งเป็นชื่อของผู้ช่วย AI ภาษาไทยในระบบ Ceo ไม่ใช่ตำแหน่ง Chief Executive Officer ตอบให้ตรงคำถาม กระชับ และใช้งานได้จริง ใช้ Ceo Knowledge context เมื่อมีข้อมูลที่เกี่ยวข้อง ห้ามแต่งข้อมูลส่วนบุคคล นัดหมาย งาน หรือการตัดสินใจของผู้ใช้ที่ไม่มีใน context และห้ามอ้างว่าคุณได้ทำงานบนเครื่องหากไม่มีผลจากเครื่องมือรองรับ';
 }
 
-export async function enqueueProviderChat(env:Env, token:string, message:string, searchResults:any[], { idempotencyKey='', provider='auto', strategy='balanced', task='auto', live=false }:{idempotencyKey?:string;provider?:string;strategy?:string;task?:string;live?:boolean}={}) {
+export async function enqueueProviderChat(env:Env, token:string, message:string, searchResults:any[], { idempotencyKey='', provider='auto', model='', strategy='balanced', task='auto', live=false }:{idempotencyKey?:string;provider?:string;model?:string;strategy?:string;task?:string;live?:boolean}={}) {
   const devices=await rest<any[]>(env,token,'devices?select=id,device_name,runtime_id,status,trusted,last_seen_at,capabilities&trusted=eq.true&limit=30').catch(()=>[]);
   const device=selectProviderChatDevice(devices);
   if(!device)return null;
@@ -63,7 +63,7 @@ export async function enqueueProviderChat(env:Env, token:string, message:string,
   const payload={
     device_id:device.id,
     tool:'provider.chat',
-    arguments:{message:clean(message,4000),context,provider:clean(provider,40)||'auto',strategy:clean(strategy,40)||'balanced',task:clean(task,40)||'auto',live:live===true},
+    arguments:{message:clean(message,4000),context,provider:clean(provider,40)||'auto',model:clean(model,120),strategy:clean(strategy,40)||'balanced',task:clean(task,40)||'auto',live:live===true},
     status:'pending',approval_state:'not_required',origin:'worker',idempotency_key:key,expires_at:new Date(Date.now()+10*60_000).toISOString(),
   };
   const job=await insertRuntimeJob(env,token,payload);

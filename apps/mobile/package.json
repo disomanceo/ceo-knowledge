@@ -8,7 +8,7 @@
     "build": "vite build",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "deploy": "wrangler pages deploy dist --project-name ceo-knowledge",
-    "test": "vitest run src/voice.test.ts"
+    "test": "vitest run src/voice.test.ts src/router.test.ts"
   },
   "dependencies": {
     "@ceo-knowledge/shared": "*",

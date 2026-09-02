@@ -14,6 +14,7 @@ import OAuthConsentPage from './OAuthConsentPage';
 import ClaimsPage from './ClaimsPage';
 import ResearchPage from './ResearchPage';
 import { chooseVoice, loadVoicePreferences, normalizeSpeechText, saveVoicePreferences, speechSynthesisSupported, speechTextForMode, splitSpeechText, type VoiceMode, type VoicePreferences } from './voice';
+import { loadRouterPreferences, routerRequest } from './router';
 
 type Tab = 'console' | 'chat' | 'today' | 'memory' | 'tasks' | 'graph' | 'drive' | 'devices' | 'approvals' | 'claims' | 'research';
 type ChatItem = { role: 'user' | 'ceo'; text: string; spokenText?: string; meta?: string; at?: number; context?: { sourceId?: string; query?: string; field?: string } };
@@ -100,7 +101,7 @@ function ChatPage() {
     const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text,sourceId:item.context?.sourceId,query:item.context?.query}));
     setMessage('');setItems(v=>[...v,{role:'user',text,at:Date.now()}]);setBusy(true);setThinking('Ceo กำลังค้น Knowledge…');setFollowLatest(true);setNewBelow(false);
     try {
-      const r=await api.chat(text,conversationId,recentContext);
+      const r=await api.chat(text,conversationId,recentContext,routerRequest(loadRouterPreferences()));
       if(r?.mode==='runtime-provider-pending'&&r?.jobId){
         const device=String(r.device?.name||'Ceo Runtime');setProvider('AUTO · RUNTIME');setThinking('Ceo Auto Router บน '+device+' กำลังเลือก Model…');
         const job=await waitForRuntimeJob(String(r.jobId));const result=job?.result&&typeof job.result==='object'?job.result:{};const answer=String(result?.response||'').trim();

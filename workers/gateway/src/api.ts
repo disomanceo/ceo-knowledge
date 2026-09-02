@@ -480,8 +480,13 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
     if (url.pathname === '/api/search' && request.method === 'GET') return ok(await searchKnowledge(env, token, clean(url.searchParams.get('q'), 240), safeLimit(url.searchParams.get('limit'), 10, 30)));
 
     if (url.pathname === '/api/chat' && request.method === 'POST') {
-      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string;sourceId?:string;query?:string}> }>(request), message = clean(body.message, 4000);
+      const body = await jsonBody<{ message?: string; conversationId?: string; projectId?: string; sourceRef?: string; conversationSummary?: string; topics?: string[]; recentContext?: Array<{role?:string;text?:string;sourceId?:string;query?:string}>; router?:{mode?:string;provider?:string;model?:string;backgroundModel?:string} }>(request), message = clean(body.message, 4000);
       if (!message) throw Object.assign(new Error('MESSAGE_REQUIRED'), { status: 400 });
+      const routerMode=['auto','provider','model'].includes(clean(body.router?.mode,20))?clean(body.router?.mode,20):'auto';
+      const requestedProvider=['gemini','openai','claude','ollama'].includes(clean(body.router?.provider,40))?clean(body.router?.provider,40):'auto';
+      const routeProvider=routerMode==='auto'?'auto':requestedProvider;
+      const routeModel=routerMode==='model'?clean(body.router?.model,120):'';
+      const backgroundModel=routerMode==='auto'?'':clean(body.router?.backgroundModel,120);
       const recentContext=(Array.isArray(body.recentContext)?body.recentContext:[]).slice(-8).map(item=>({role:clean(item?.role,20),text:clean(item?.text,1000),sourceId:clean(item?.sourceId,200),query:clean(item?.query,1000)})).filter(item=>item.text);
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
       const previousSource=[...recentContext].reverse().find(item=>item.role==='ceo'&&item.sourceId);
@@ -492,9 +497,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const intent = detectChatIntent(message);
       if (intent.kind === 'live') {
         const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ตอนนี้ทั้ง Ceo Runtime และ Cloud AI Search ยังไม่พร้อมใช้งานครับ';
-        const routed=await enqueueProviderChat(env,token,message,[],{strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
+        const routed=await enqueueProviderChat(env,token,message,[],{provider:routeProvider,model:routeModel,strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
         if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null,live:true});
-        const cloud=await askCloudAi(env,message,[],{live:true});
+        const cloud=await askCloudAi(env,message,[],{live:true,provider:routeProvider,model:routeModel});
         if(cloud.ok)return ok({intent:'live',answer:cloud.answer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,autoMemory:null,live:true});
         return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',cloudReason:cloud.reason,autoMemory:null,live:true});
       }
@@ -530,9 +535,9 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
             ...temporal.memories.map((m:any)=>({kind:'memory',title:clean(m.title||m.content,240),content:clean(m.content||m.title,1600)})),
           ].slice(0,8);
           const analysisPrompt=`คำถามเดิมของผู้ใช้: ${message}\nวิเคราะห์ตารางจาก Ceo Knowledge context ที่ให้มาเท่านั้น ตอบเป็นภาษาไทยแบบเลขานุการ: รวมรายการที่หมายถึงเหตุการณ์เดียวกัน, แยกนัด/กำหนดการหลักออกจากกิจกรรมต่อเนื่อง, ห้ามแต่งวัน เวลา หรือสถานที่, และถ้า allDay=true ห้ามตีความ 00:00 ว่าเป็นเวลานัด`;
-          const routed=await enqueueProviderChat(env,token,analysisPrompt,groundedRows,{task:'reasoning',strategy:'balanced'}).catch(()=>null);
+          const routed=await enqueueProviderChat(env,token,analysisPrompt,groundedRows,{provider:routeProvider,model:backgroundModel||routeModel,task:'reasoning',strategy:'balanced'}).catch(()=>null);
           if(routed?.job?.id)return ok({intent:intent.kind,answer:'กำลังวิเคราะห์ตารางให้ครับ…',fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null});
-          const cloud=await askCloudAi(env,analysisPrompt,groundedRows);
+          const cloud=await askCloudAi(env,analysisPrompt,groundedRows,{provider:routeProvider,model:backgroundModel||routeModel});
           if(cloud.ok)return ok({intent:intent.kind,answer:cloud.answer,fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:false,sources:cloud.sources,autoMemory:null});
         }
         return ok({ intent:intent.kind, answer:fallbackAnswer, temporal, range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope}, autoMemory:null, mode:'knowledge', provider:'knowledge' });
@@ -553,11 +558,11 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       if(intent.kind==='recall'&&directAnswer.confident){
         return ok({ intent:'recall', answer:directAnswer.answer, search, ai:false, aiConfigured:Boolean(env.LLM_API_KEY), mode:'knowledge', provider:'knowledge', autoMemory:null, context:{conversationId:clean(body.conversationId,200),query:contextualQuery,field:directAnswer.field,sourceId:directAnswer.sourceId} });
       }
-      const routed = await enqueueProviderChat(env, token, message, search.results).catch(() => null);
+      const routed = await enqueueProviderChat(env, token, message, search.results,{provider:routeProvider,model:routeModel}).catch(() => null);
       if (routed?.job?.id) return ok({ intent: 'runtime-provider', answer: 'กำลังส่งคำถามให้ Ceo Auto Router…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'runtime-provider-pending', provider: 'auto', jobId: routed.job.id, device: routed.device, autoMemory });
       const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);
       if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device, autoMemory });
-      const cloud = await askCloudAi(env, message, search.results);
+      const cloud = await askCloudAi(env, message, search.results,{provider:routeProvider,model:routeModel});
       const mode = cloud.ok ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
       return ok({ intent: intent.kind, answer: cloud.ok ? cloud.answer : fallbackAnswer, search, ai: cloud.ok, aiConfigured: cloudAiConfig(env).configured, mode, provider: cloud.ok ? cloud.provider : 'knowledge', model: cloud.ok ? cloud.model : '', grounded: cloud.grounded, sources: cloud.sources, cloudReason: cloud.ok ? undefined : cloud.reason, autoMemory });
     }

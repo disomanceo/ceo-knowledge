@@ -91,9 +91,9 @@ describe('structured chat retrieval',()=>{
      if(url.includes('/rest/v1/runtime_jobs')&&method==='POST')return json([{id:'job-weather',...body}],201);
      throw new Error('unexpected '+method+' '+url);
    });
-   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เช็คสภาพอากาศวันนี้'})}),apiEnv),payload:any=await response.json();
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เช็คสภาพอากาศวันนี้',router:{mode:'model',provider:'gemini',model:'gemini-custom-test',backgroundModel:'gemini-lite-test'}})}),apiEnv),payload:any=await response.json();
    expect(payload.data.intent).toBe('live');expect(payload.data.mode).toBe('runtime-provider-pending');expect(payload.data.live).toBe(true);
-   const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.arguments.live).toBe(true);expect(job.body.arguments.strategy).toBe('cloud-first');
+   const job=calls.find(x=>x.url.includes('/rest/v1/runtime_jobs')&&x.method==='POST');expect(job.body.arguments.live).toBe(true);expect(job.body.arguments.strategy).toBe('cloud-first');expect(job.body.arguments.provider).toBe('gemini');expect(job.body.arguments.model).toBe('gemini-custom-test');
    expect(calls.some(x=>x.url.includes('/rest/v1/events?'))).toBe(false);
  });
  it('analyzes พรุ่งนี้มีนัดอะไรไหม from deduped appointment context',async()=>{
