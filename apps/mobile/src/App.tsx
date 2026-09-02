@@ -19,6 +19,13 @@ import { loadRouterPreferences, routerRequest } from './router';
 type Tab = 'console' | 'chat' | 'today' | 'memory' | 'tasks' | 'graph' | 'drive' | 'devices' | 'approvals' | 'claims' | 'research';
 type ChatItem = { role: 'user' | 'ceo'; text: string; spokenText?: string; meta?: string; at?: number; context?: { sourceId?: string; query?: string; field?: string } };
 
+async function clientContextFor(message:string):Promise<{latitude?:number;longitude?:number;timezone?:string}|undefined>{
+  if(!/(?:สภาพอากาศ|พยากรณ์อากาศ|อากาศ|ฝน|อุณหภูมิ|weather|forecast|rain|temperature)/i.test(message))return undefined;
+  const timezone=Intl.DateTimeFormat().resolvedOptions().timeZone||'Asia/Bangkok';
+  if(!navigator.geolocation)return{timezone};
+  return await new Promise(resolve=>navigator.geolocation.getCurrentPosition(position=>resolve({latitude:position.coords.latitude,longitude:position.coords.longitude,timezone}),()=>resolve({timezone}),{enableHighAccuracy:false,timeout:2500,maximumAge:10*60*1000}));
+}
+
 async function waitForRuntimeJob(id: string, timeoutMs = 45_000) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
@@ -101,7 +108,7 @@ function ChatPage() {
     const recentContext=items.slice(-8).map(item=>({role:item.role,text:item.text,sourceId:item.context?.sourceId,query:item.context?.query}));
     setMessage('');setItems(v=>[...v,{role:'user',text,at:Date.now()}]);setBusy(true);setThinking('Ceo กำลังค้น Knowledge…');setFollowLatest(true);setNewBelow(false);
     try {
-      const r=await api.chat(text,conversationId,recentContext,routerRequest(loadRouterPreferences()));
+      const r=await api.chat(text,conversationId,recentContext,routerRequest(loadRouterPreferences()),await clientContextFor(text));
       if(r?.mode==='runtime-provider-pending'&&r?.jobId){
         const device=String(r.device?.name||'Ceo Runtime');setProvider('AUTO · RUNTIME');setThinking('Ceo Auto Router บน '+device+' กำลังเลือก Model…');
         const job=await waitForRuntimeJob(String(r.jobId));const result=job?.result&&typeof job.result==='object'?job.result:{};const answer=String(result?.response||'').trim();

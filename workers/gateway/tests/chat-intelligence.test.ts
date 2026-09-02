@@ -85,7 +85,16 @@ describe('structured chat retrieval',()=>{
    const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เดือนนี้มีงานเกษียณอะไรบ้าง'})}),apiEnv),payload:any=await response.json();
    expect(payload.data.intent).toBe('temporal');expect(payload.data.range.granularity).toBe('month');expect(payload.data.answer).toContain('งานเลี้ยงเกษียณ ผอ. เผือก');expect(payload.data.answer).toContain('งานเกษียณ ผอ. เผือก ที่โรงเรียน');expect(payload.data.answer).not.toContain('ประชุมครู');expect(payload.data.answer).not.toContain('เดือนตุลาคม');
  });
- it('routes เช็คสภาพอากาศวันนี้ to LIVE provider and never Today calendar',async()=>{
+ it('counts unique PA assessment schools for the current month even when some event titles omit PA',async()=>{
+   vi.stubGlobal('fetch',async(input:any)=>{const url=decodeURIComponent(String(input));if(url.endsWith('/auth/v1/user'))return json({id:'u1'});if(url.includes('/rest/v1/events?'))return json([
+     {id:'b1',title:'ประเมิน PA โรงเรียนบางจิก',description:'วันที่ 14 กันยายน 2569 ประเมิน PA โรงเรียนบางจิก',event_type:'activity',start_at:'2026-09-13T17:00:00Z',all_day:true,status:'planned',metadata:{}},
+     {id:'b2',title:'วันที่ 14 ก.ย. 2569 ประเมิน โรงเรียนวัดบางจิก',description:'วันที่ 14 ก.ย. 2569 ประเมิน โรงเรียนวัดบางจิก',event_type:'activity',start_at:'2026-09-13T17:00:00Z',all_day:true,status:'planned',metadata:{autoMemory:true},tags:['auto-memory']},
+     {id:'p15',title:'วันที่ 15 ก.ย. 2569 ประเมิน โรงเรียนวัดไผ่มุ้ง',description:'ประเมิน โรงเรียนวัดไผ่มุ้ง',event_type:'activity',start_at:'2026-09-14T17:00:00Z',all_day:true,status:'planned'},
+     {id:'p16',title:'วันที่ 16 ก.ย. 2569 ประเมิน โรงเรียนวัดดอนไข่เต่า',description:'ประเมิน โรงเรียนวัดดอนไข่เต่า',event_type:'activity',start_at:'2026-09-15T17:00:00Z',all_day:true,status:'planned'},
+     {id:'p17',title:'วันที่ 17 ก.ย. 2569 ประเมิน โรงเรียนวัดดอนขาด',description:'ประเมิน โรงเรียนวัดดอนขาด',event_type:'activity',start_at:'2026-09-16T17:00:00Z',all_day:true,status:'planned'},
+   ]);if(url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memories?')||url.includes('/rest/v1/memory_nodes?'))return json([]);throw new Error('unexpected '+url)});
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'เดือนนี้ประเมิน pa กี่โรงเรียน'})}),apiEnv),payload:any=await response.json();expect(payload.data.mode).toBe('knowledge');expect(payload.data.aggregate.count).toBe(4);expect(payload.data.answer).toContain('4 โรงเรียน');
+ }); it('routes เช็คสภาพอากาศวันนี้ to LIVE provider and never Today calendar',async()=>{
    const calls:any[]=[];vi.stubGlobal('fetch',async(input:any,init:any={})=>{const url=String(input),method=String(init.method||'GET').toUpperCase();let body:any=null;try{body=init.body?JSON.parse(String(init.body)):null}catch{}calls.push({url:decodeURIComponent(url),method,body});
      if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
      if(url.includes('/rest/v1/devices?'))return json([{id:'dev1',device_name:'Ceo PC',runtime_id:'r1',status:'online',trusted:true,last_seen_at:new Date().toISOString(),capabilities:{remoteTools:['provider.chat']}}]);

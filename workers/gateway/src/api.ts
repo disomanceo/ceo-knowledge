@@ -147,7 +147,8 @@ async function searchKnowledge(env: Env, token: string, query: string, limit = 1
   const tokens = recallTerms.toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const lockedRows=preferredSourceId?rows.filter(row=>String(row.id||row.node_id||'')===preferredSourceId):[];
   const strictRows = rows.filter(row => recallSubjectMatches(q,row));
-  const candidateRows = lockedRows.length ? [...lockedRows,...strictRows.filter(row=>!lockedRows.includes(row))] : strictRows.length ? strictRows : rows;
+  const fuzzyRows=!strictRows.length&&structuredRecall?rows.map(row=>({row,score:fuzzyRecallMatch(tokens,row)})).filter(item=>item.score>=0.68).sort((a,b)=>b.score-a.score).map(item=>({...item.row,_fuzzyScore:item.score})):[];
+  const candidateRows = lockedRows.length ? [...lockedRows,...strictRows.filter(row=>!lockedRows.includes(row))] : strictRows.length ? strictRows : fuzzyRows.length ? fuzzyRows : rows;
   const ranked = candidateRows.map(row => {
     const title = clean(row.title || row.full_name || '', 500).toLocaleLowerCase();
     const body = clean(row.content || row.summary || row.rationale || '', 5000).toLocaleLowerCase();
