@@ -170,7 +170,13 @@ describe('topic recall across structured secretary data',()=>{
    expect(payload.data.answer).toBe('ที่ Big C สุพรรณบุรีครับ');expect(payload.data.context.query).toBe('ดูภาพยนต์วันไหน');expect(payload.data.context.field).toBe('location');expect(payload.data.mode).toBe('knowledge');
    expect(calls.some(x=>x.includes('/rest/v1/runtime_jobs'))).toBe(false);
  });
- it('answers จัดงานเกษียณวันไหน from structured Events without Auto Router',async()=>{
+ it('uses fuzzy event matching only when strict recall misses a small Thai typo',async()=>{
+   vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);if(url.endsWith('/auth/v1/user'))return json({id:'u1'});if(url.includes('/rest/v1/events?'))return json([
+     {id:'b14',title:'ประเมิน PA โรงเรียนบางจิก',description:'ประเมิน PA โรงเรียนบางจิก',event_type:'activity',start_at:'2026-09-13T17:00:00Z',all_day:true,status:'planned'},
+     {id:'d17',title:'วันที่ 17 ก.ย. 2569 ประเมิน โรงเรียนวัดดอนขาด',description:'ประเมิน PA โรงเรียนวัดดอนขาด',event_type:'activity',start_at:'2026-09-16T17:00:00Z',all_day:true,status:'planned'}
+   ]);if(url.includes('/rest/v1/tasks?')||url.includes('/rest/v1/memories?')||url.includes('/rest/v1/decisions?')||url.includes('/rest/v1/knowledge_entries?')||url.includes('/rest/v1/memory_nodes?')||url.includes('/rest/v1/devices?'))return json([]);throw new Error('unexpected '+url)});
+   const response=await handleApi(new Request('https://ceo.test/api/chat',{method:'POST',headers:auth,body:JSON.stringify({message:'ประเมิน PA ตอนขาดวันไหน'})}),apiEnv),payload:any=await response.json();expect(payload.data.mode).toBe('knowledge');expect(payload.data.answer).toBe('วันที่ 17 กันยายน 2569ครับ');
+ }); it('answers จัดงานเกษียณวันไหน from structured Events without Auto Router',async()=>{
    const calls:string[]=[];vi.stubGlobal('fetch',async(input:any)=>{const url=String(input);calls.push(decodeURIComponent(url));
      if(url.endsWith('/auth/v1/user'))return json({id:'u1'});
      if(url.includes('/rest/v1/events?'))return json([
