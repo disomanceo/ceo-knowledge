@@ -5,6 +5,7 @@ import { cloudChatFallback, composeRecallAnswer, isBareRecallFieldQuestion, reca
 import { composeTaskAnswer, composeTemporalAnswer, dedupeTemporalKnowledge, detectChatIntent, eventMatchesCalendarScope, isQuestionLike, memoryLooksLikeQuestion, memoryMatchesCalendarScope, temporalTextMatchesIntent, topicMatches, type TimeIntent } from './chat-intelligence';
 import { enqueueOllamaChat, enqueueProviderChat, selectOllamaDevice, selectProviderChatDevice } from './runtime-chat';
 import { askCloudAi, cloudAiConfig } from './cloud-ai';
+import { contextResolutionPublic, isContextualQuestion, resolveConversationContext } from './context-resolver';
 import { resolveLiveDirect } from './live-resolver';
 import { insertRuntimeJob } from './runtime-jobs';
 import { rest, rpc, verifyUser, type Env, type AuthUser } from './supabase';
@@ -310,7 +311,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
   if(mcp)return mcp;
   if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: corsHeaders });
   const url = new URL(request.url);
-  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, time: new Date().toISOString() });
+  if (url.pathname === '/health' || url.pathname === '/api/health') return ok({ service: 'ceo-knowledge-gateway', version: '2.0.0-dev', environment: env.APP_ENV || 'unknown', chat_mode: cloudAiConfig(env).configured ? 'auto-runtime-provider-router-cloud-ai' : 'auto-runtime-provider-router', cloud_ai: cloudAiConfig(env).primary, context_resolver:'deterministic-first-ai-on-ambiguity', time: new Date().toISOString() });
 
   try {
     const { token, user } = await authenticated(env, request);
@@ -326,7 +327,7 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
           : cloud.configured
             ? {source:'cloud',provider:cloud.primary,model:cloud.primary==='gemini'?cloud.gemini.model:cloud.legacy.model,device:null}
             : {source:'knowledge',provider:'knowledge',model:'',device:null};
-      return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud});
+      return ok({policy:'auto',active,runtime:{providerChat:Boolean(runtimeDevice),ollama:Boolean(ollamaDevice),online:Boolean(runtimeDevice||ollamaDevice)},cloud,contextResolver:{enabled:cloud.configured,mode:'deterministic-first-ai-on-ambiguity',confidence:{answer:0.85,expand:0.6,clarifyBelow:0.6},grounding:'database-required-for-personal-context'}});
     }
 
     if (url.pathname === '/api/today' && request.method === 'GET') return ok(await listToday(env, token, url));
@@ -493,20 +494,27 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
       const previousUser=[...recentContext].reverse().find(item=>item.role==='user'&&recallSubjectQuery(item.text).length>=2);
       const previousSource=[...recentContext].reverse().find(item=>item.role==='ceo'&&item.sourceId);
       const bareField=isBareRecallFieldQuestion(message);
-      const contextualQuery=bareField&&previousUser?previousUser.text:message;
-      const preferredSourceId=bareField?clean(previousSource?.sourceId,200):'';
+      const legacyContextualQuery=bareField&&previousUser?previousUser.text:message;
+      const contextResolution=await resolveConversationContext(env,message,recentContext,{model:backgroundModel});
+      const resolvedQuery=contextResolution.confidence>=0.6?contextResolution.resolvedQuery:legacyContextualQuery;
+      const preferredSourceId=(bareField||contextResolution.dependsOnPriorContext)?clean(previousSource?.sourceId,200):'';
+      const contextMeta=contextResolutionPublic(contextResolution);
       const memoryTurn=resolveMemoryCaptureTurn(message,recentContext);
-      const intent = detectChatIntent(message);
+      const intent = detectChatIntent(resolvedQuery);
+      if(contextResolution.clarificationRequired){
+        return ok({intent:'clarification',answer:'ขอระบุอีกนิดครับว่าหมายถึงเรื่องไหน เพื่อไม่ให้ผมเดาผิดบริบท',mode:'clarification',provider:'knowledge',ai:true,aiConfigured:cloudAiConfig(env).configured,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+      }
       if (intent.kind === 'live') {
-        const direct=await resolveLiveDirect(message).catch(()=>null);
-        if(direct?.ok)return ok({intent:'live',answer:direct.answer,search:{query:message,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-direct',provider:'direct',source:direct.source,sources:[{title:direct.source,url:direct.sourceUrl}],liveData:direct.data,autoMemory:null,live:true});
+        const direct=await resolveLiveDirect(resolvedQuery).catch(()=>null);
+        if(direct?.ok)return ok({intent:'live',answer:direct.answer,search:{query:resolvedQuery,results:[]},ai:contextResolution.usedAI,aiConfigured:cloudAiConfig(env).configured,mode:'live-direct',provider:'direct',source:direct.source,sources:[{title:direct.source,url:direct.sourceUrl}],liveData:direct.data,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
         const fallbackAnswer='คำถามนี้ต้องใช้ข้อมูลปัจจุบันจากอินเทอร์เน็ต แต่ตอนนี้ทั้งแหล่งข้อมูลตรง Ceo Runtime และ Cloud AI Search ยังไม่พร้อมใช้งานครับ';
-        const routed=await enqueueProviderChat(env,token,message,[],{provider:routeProvider,model:routeModel,strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
-        if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,directReason:direct?.reason,autoMemory:null,live:true});
-        const cloud=await askCloudAi(env,message,[],{live:true,provider:routeProvider,model:routeModel});
-        if(cloud.ok)return ok({intent:'live',answer:cloud.answer,search:{query:message,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,directReason:direct?.reason,autoMemory:null,live:true});
-        return ok({intent:'live',answer:fallbackAnswer,search:{query:message,results:[]},ai:false,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',directReason:direct?.reason,cloudReason:cloud.reason,autoMemory:null,live:true});
-      }      const question = isQuestionLike(message);
+        const routed=await enqueueProviderChat(env,token,resolvedQuery,[],{provider:routeProvider,model:routeModel,strategy:'cloud-first',task:'reasoning',live:true}).catch(()=>null);
+        if(routed?.job?.id)return ok({intent:'live',answer:'กำลังค้นข้อมูลล่าสุดให้ครับ…',fallbackAnswer,search:{query:resolvedQuery,results:[]},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,directReason:direct?.reason,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        const cloud=await askCloudAi(env,resolvedQuery,[],{live:true,provider:routeProvider,model:routeModel});
+        if(cloud.ok)return ok({intent:'live',answer:cloud.answer,search:{query:resolvedQuery,results:[]},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:cloud.grounded,sources:cloud.sources,directReason:direct?.reason,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+        return ok({intent:'live',answer:fallbackAnswer,search:{query:resolvedQuery,results:[]},ai:contextResolution.usedAI,aiConfigured:cloudAiConfig(env).configured,mode:'live-unavailable',provider:'knowledge',directReason:direct?.reason,cloudReason:cloud.reason,autoMemory:null,live:true,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+      }
+      const question = isContextualQuestion(message,contextResolution);
       let autoMemory: any = null;
       if (!question) {
         if(memoryTurn.followUp&&!memoryTurn.message)return ok({intent:'remember',answer:'ยังไม่มีข้อความก่อนหน้าที่ชัดเจนให้บันทึกครับ',memory:null,autoMemory:null,mode:'knowledge',provider:'knowledge'});
@@ -537,37 +545,46 @@ export async function handleApi(request: Request, env: Env): Promise<Response> {
             ...temporal.tasks.map((t:any)=>({kind:'task',title:clean(t.title||t.description,240),content:clean(`due=${t.due_at||''}; status=${t.status||''}; detail=${t.description||''}`,1600)})),
             ...temporal.memories.map((m:any)=>({kind:'memory',title:clean(m.title||m.content,240),content:clean(m.content||m.title,1600)})),
           ].slice(0,8);
-          const analysisPrompt=`คำถามเดิมของผู้ใช้: ${message}\nวิเคราะห์ตารางจาก Ceo Knowledge context ที่ให้มาเท่านั้น ตอบเป็นภาษาไทยแบบเลขานุการ: รวมรายการที่หมายถึงเหตุการณ์เดียวกัน, แยกนัด/กำหนดการหลักออกจากกิจกรรมต่อเนื่อง, ห้ามแต่งวัน เวลา หรือสถานที่, และถ้า allDay=true ห้ามตีความ 00:00 ว่าเป็นเวลานัด`;
+          const analysisPrompt=`คำถามเดิมของผู้ใช้: ${message}\nความหมายที่ resolve แล้ว: ${resolvedQuery}\nวิเคราะห์ตารางจาก Ceo Knowledge context ที่ให้มาเท่านั้น ตอบเป็นภาษาไทยแบบเลขานุการสั้น กระชับ: รวมรายการที่หมายถึงเหตุการณ์เดียวกัน, แยกนัด/กำหนดการหลักออกจากกิจกรรมต่อเนื่อง, ห้ามแต่งวัน เวลา หรือสถานที่, และถ้า allDay=true ห้ามตีความ 00:00 ว่าเป็นเวลานัด`;
           const routed=await enqueueProviderChat(env,token,analysisPrompt,groundedRows,{provider:routeProvider,model:backgroundModel||routeModel,task:'reasoning',strategy:'balanced'}).catch(()=>null);
-          if(routed?.job?.id)return ok({intent:intent.kind,answer:'กำลังวิเคราะห์ตารางให้ครับ…',fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null});
-          const cloud=await askCloudAi(env,analysisPrompt,groundedRows,{provider:routeProvider,model:backgroundModel||routeModel});
-          if(cloud.ok)return ok({intent:intent.kind,answer:cloud.answer,fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:false,sources:cloud.sources,autoMemory:null});
+          if(routed?.job?.id)return ok({intent:intent.kind,answer:'กำลังวิเคราะห์ตารางให้ครับ…',fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'runtime-provider-pending',provider:'auto',jobId:routed.job.id,device:routed.device,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
+          const cloud=await askCloudAi(env,analysisPrompt,groundedRows,{provider:routeProvider,model:backgroundModel||routeModel,groundedOnly:true});
+          if(cloud.ok)return ok({intent:intent.kind,answer:cloud.answer,fallbackAnswer,temporal,range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope},ai:true,aiConfigured:true,mode:'cloud-ai',provider:cloud.provider,model:cloud.model,grounded:false,sources:cloud.sources,autoMemory:null,contextResolution:contextMeta,context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId}});
         }
-        return ok({ intent:intent.kind, answer:fallbackAnswer, temporal, range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope}, autoMemory:null, mode:'knowledge', provider:'knowledge' });
+        return ok({ intent:intent.kind, answer:fallbackAnswer, temporal, range:{from:intent.from,to:intent.to,label:intent.label,granularity:intent.granularity,scope:intent.scope}, autoMemory:null, mode:'knowledge', provider:'knowledge', contextResolution:contextMeta, context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId} });
       }
       if (intent.kind === 'today') {
         const today = await listToday(env, token, url);
         const answer = `วันนี้มี ${today.events.length} นัด/กิจกรรม และมีงานที่ยังเปิดอยู่ ${today.tasks.length} งานครับ`;
-        return ok({ intent: 'today', answer, today, autoMemory, mode:'knowledge', provider:'knowledge' });
+        return ok({ intent: 'today', answer, today, autoMemory, mode:'knowledge', provider:'knowledge', contextResolution:contextMeta, context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId} });
       }
       if (intent.kind === 'tasks') {
         const tasks = await rest<TaskRecord[]>(env, token, `tasks${qs({ select: '*', status: 'in.(open,in_progress,waiting,overdue)', order: 'due_at.asc.nullslast,updated_at.desc', limit: 30 })}`);
-        return ok({ intent: 'tasks', answer:composeTaskAnswer(tasks), tasks, autoMemory, mode:'knowledge', provider:'knowledge' });
+        return ok({ intent: 'tasks', answer:composeTaskAnswer(tasks), tasks, autoMemory, mode:'knowledge', provider:'knowledge', contextResolution:contextMeta, context:{conversationId:clean(body.conversationId,200),query:resolvedQuery,field:contextResolution.answerField,sourceId:preferredSourceId} });
       }
-      const answerField=recallAnswerField(message);
-      const search = await searchKnowledge(env, token, contextualQuery, 8, answerField, preferredSourceId);
-      const directAnswer=composeRecallAnswer(message,search.results);
-      const fallbackAnswer = directAnswer.answer || cloudChatFallback(message, search.results);
-      if(intent.kind==='recall'&&directAnswer.confident){
-        return ok({ intent:'recall', answer:directAnswer.answer, search, ai:false, aiConfigured:Boolean(env.LLM_API_KEY), mode:'knowledge', provider:'knowledge', autoMemory:null, context:{conversationId:clean(body.conversationId,200),query:contextualQuery,field:directAnswer.field,sourceId:directAnswer.sourceId} });
+      const currentField=recallAnswerField(message);
+      const answerField=contextResolution.answerField!=='general'?contextResolution.answerField:currentField;
+      const search = await searchKnowledge(env, token, resolvedQuery, 8, answerField, preferredSourceId);
+      const compositionMessage=answerField!==currentField&&contextResolution.usedAI?resolvedQuery:message;
+      const directAnswer=composeRecallAnswer(compositionMessage,search.results);
+      const fallbackAnswer = directAnswer.answer || cloudChatFallback(compositionMessage, search.results);
+      const responseContext={conversationId:clean(body.conversationId,200),query:resolvedQuery,field:directAnswer.field||answerField,sourceId:directAnswer.sourceId||preferredSourceId};
+      if(directAnswer.confident&&(intent.kind==='recall'||contextResolution.ambiguous)){
+        return ok({ intent:'recall', answer:directAnswer.answer, search, ai:contextResolution.usedAI, aiConfigured:cloudAiConfig(env).configured, mode:'knowledge', provider:'knowledge', autoMemory:null, contextResolution:contextMeta, context:responseContext });
       }
-      const routed = await enqueueProviderChat(env, token, message, search.results,{provider:routeProvider,model:routeModel}).catch(() => null);
-      if (routed?.job?.id) return ok({ intent: 'runtime-provider', answer: 'กำลังส่งคำถามให้ Ceo Auto Router…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'runtime-provider-pending', provider: 'auto', jobId: routed.job.id, device: routed.device, autoMemory });
-      const ollama = await enqueueOllamaChat(env, token, message, search.results).catch(() => null);
-      if (ollama?.job?.id) return ok({ intent: 'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device, autoMemory });
-      const cloud = await askCloudAi(env, message, search.results,{provider:routeProvider,model:routeModel});
+      const personalRecall=intent.kind==='recall'&&/(?:จำ|นัด|งาน|กิจกรรม|เมื่อวาน|เมื่อเช้า|เมื่อคืน|วันไหน|วันที่|ที่ไหน|กี่โมง|ใคร|กิน|ไปไหน|ครู|ผอ\.?|โรงเรียน|ของฉัน|ของผม|ของเรา)/iu.test(resolvedQuery);
+      const requiresGrounding=contextResolution.ambiguous||personalRecall||search.results.length>0;
+      if(requiresGrounding&&!search.results.length){
+        return ok({intent:'recall',answer:fallbackAnswer,search,ai:contextResolution.usedAI,aiConfigured:cloudAiConfig(env).configured,mode:'knowledge-only',provider:'knowledge',autoMemory:null,contextResolution:contextMeta,context:responseContext});
+      }
+      const providerPrompt=requiresGrounding?`คำถามเดิม: ${message}\nความหมายที่ resolve แล้ว: ${resolvedQuery}\nตอบจาก Ceo Knowledge context ที่ส่งให้เท่านั้น แบบสั้น กระชับ ไม่เกิน 3 ประโยค ห้ามสร้างวัน เวลา สถานที่ บุคคล งาน นัดหมาย หรือความจำที่ไม่มีใน context ถ้าหลักฐานไม่พอให้ตอบว่าไม่พบข้อมูลที่ยืนยันได้`:message;
+      const routed = await enqueueProviderChat(env, token, providerPrompt, search.results,{provider:routeProvider,model:requiresGrounding?(backgroundModel||routeModel):routeModel,task:requiresGrounding?'reasoning':'general'}).catch(() => null);
+      if (routed?.job?.id) return ok({ intent: requiresGrounding?'recall':'runtime-provider', answer: 'กำลังส่งคำถามให้ Ceo Auto Router…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'runtime-provider-pending', provider: 'auto', jobId: routed.job.id, device: routed.device, autoMemory, contextResolution:contextMeta, context:responseContext });
+      const ollama = await enqueueOllamaChat(env, token, providerPrompt, search.results).catch(() => null);
+      if (ollama?.job?.id) return ok({ intent: requiresGrounding?'recall':'ollama', answer: 'กำลังส่งคำถามให้ Ollama บนเครื่อง Ceo…', fallbackAnswer, search, ai: true, aiConfigured: true, mode: 'ollama-pending', provider: 'ollama', model: ollama.model, jobId: ollama.job.id, device: ollama.device, autoMemory, contextResolution:contextMeta, context:responseContext });
+      const cloud = await askCloudAi(env, providerPrompt, search.results,{provider:routeProvider,model:requiresGrounding?(backgroundModel||routeModel):routeModel,groundedOnly:requiresGrounding});
       const mode = cloud.ok ? 'cloud-ai' : search.results.length ? 'knowledge' : 'knowledge-only';
-      return ok({ intent: intent.kind, answer: cloud.ok ? cloud.answer : fallbackAnswer, search, ai: cloud.ok, aiConfigured: cloudAiConfig(env).configured, mode, provider: cloud.ok ? cloud.provider : 'knowledge', model: cloud.ok ? cloud.model : '', grounded: cloud.grounded, sources: cloud.sources, cloudReason: cloud.ok ? undefined : cloud.reason, autoMemory });
+      return ok({ intent: intent.kind, answer: cloud.ok ? cloud.answer : fallbackAnswer, search, ai: cloud.ok||contextResolution.usedAI, aiConfigured: cloudAiConfig(env).configured, mode, provider: cloud.ok ? cloud.provider : 'knowledge', model: cloud.ok ? cloud.model : '', grounded: requiresGrounding, sources: cloud.sources, cloudReason: cloud.ok ? undefined : cloud.reason, autoMemory, contextResolution:contextMeta, context:responseContext });
     }
     if (url.pathname === '/api/drive/config' && request.method === 'GET') return ok(await ceoDriveConfig(env));
     if (url.pathname === '/api/drive/status' && request.method === 'GET') return ok(await ceoDriveStatus(driveProviderToken(request)));
