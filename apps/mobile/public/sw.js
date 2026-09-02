@@ -1,4 +1,4 @@
-const CACHE = 'ceo-knowledge-pwa-v1';
+const CACHE = 'ceo-knowledge-pwa-v2';
 const APP_SHELL = [
   '/',
   '/manifest.webmanifest',
@@ -14,7 +14,7 @@ self.addEventListener('install', (event) => {
   event.waitUntil(
     caches
       .open(CACHE)
-      .then((cache) => cache.addAll(APP_SHELL))
+      .then((cache) => cache.addAll(APP_SHELL.map((url) => new Request(url, { cache: 'reload' }))))
       .then(() => self.skipWaiting()),
   );
 });
@@ -28,6 +28,10 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+self.addEventListener('message', (event) => {
+  if (event.data?.type === 'SKIP_WAITING') void self.skipWaiting();
+});
+
 self.addEventListener('fetch', (event) => {
   const request = event.request;
   const url = new URL(request.url);
@@ -39,7 +43,7 @@ self.addEventListener('fetch', (event) => {
   event.respondWith(
     fetch(request)
       .then((response) => {
-        if (response.ok) {
+        if (response.ok && response.type === 'basic') {
           const copy = response.clone();
           void caches.open(CACHE).then((cache) => cache.put(request, copy));
         }
